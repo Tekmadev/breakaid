@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BreakAid — Costco Gameplan Generator
 
-## Getting Started
+A Next.js 16 web app that helps Costco managers auto-generate the daily 30-minute interval **Gameplan** for employees stationed at the warehouse Door (entry/exit). Upload the weekly schedule, configure who can do what, and let the engine assign Doors, Walks, Breaks, Security, and Front End coverage in one click.
 
-First, run the development server:
+## Stack
+
+- **Next.js 16** (App Router) + **React 19**
+- **TypeScript**
+- **Tailwind v4** styling with a glassmorphism UI and official Costco brand colors (Red `#E31837`, Blue `#005DAA`)
+- [`xlsx`](https://www.npmjs.com/package/xlsx) for client-side Excel/CSV parsing
+- [`lucide-react`](https://lucide.dev) for icons
+
+## Features
+
+- **Drag-and-drop upload** of the weekly schedule (`.xlsx` / `.csv`)
+- **Capabilities modal** — toggle per-employee certifications (Walks, Security)
+- **Interactive grid** — employees on rows, 30-min slots on columns; click any cell to cycle task assignments
+- **Auto-Generate engine** — assigns `D`, `W`, `B`, `B/D`, `SEC`, `FE` per Costco's staffing rules
+- **CSV export** matching the official Costco Gameplan template
+
+## Auto-Generate Rules
+
+| Code | Meaning | Rule |
+|------|---------|------|
+| `D` | Door | Default for active shifts; target = 4 employees at all times |
+| `W` | Walk | 1 capable employee at the top of every hour; fair rotation |
+| `B` | Break | Full 8.5h shifts get two 30-min breaks near 1/3 and 2/3 marks |
+| `B/D` | Break + Door | 4–5h shifts get a single 15/15 combo near mid-shift |
+| `SEC` | Security | Authorized late-shift employees only (Midnight weekdays, 11:30 PM weekends) |
+| `FE` | Front End | Overflow when Door > 4 and all Walks/Breaks are covered |
+
+> Coverage constraint: a break is never assigned if it would drop Door coverage below 3 people — the engine shifts it to the closest valid slot.
+
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `npm run dev` — start the dev server
+- `npm run build` — production build
+- `npm run start` — serve the production build
+- `npm run lint` — run ESLint
 
-## Learn More
+## Roadmap
 
-To learn more about Next.js, take a look at the following resources:
+- Real row-by-row parser for Costco's specific weekly schedule format (currently mock data)
+- Optional backend persistence for employee capabilities
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Sample input spreadsheets and exported gameplans are gitignored — they contain real employee data and must not be committed.
