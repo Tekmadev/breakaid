@@ -1,0 +1,13 @@
+{
+  "name": "breakaid",
+  "version": "0.1.0",
+  "description": "Costco member-service gameplan tool",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "typecheck:watch": "tsc --noEmit --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
