@@ -1,43 +1,50 @@
 /**
- * generator.ts — Core scheduling engine for the BreakAid Gameplan.
+ * generator.ts — Core scheduling engine for the BreakAid Gameplan (v2).
+ *
+ * This version encodes the real Costco door rules captured from the manager's
+ * feedback. See the project memory "costco-scheduling-rules" for the source.
  *
  * Public API
  * ----------
  * generateGameplan(employees, isWeekend?) → Gameplan
- *
- * Design guarantees
- * -----------------
- * ✓ Pure function — same logical inputs always produce a valid Gameplan.
- *   Walk tie-breaking is random, so outputs may vary, but every output
- *   satisfies all six business rules.
- * ✓ No mutations — every helper receives a Gameplan and returns a NEW one.
- *   The input object is never modified.
- * ✓ Each business rule is isolated in its own clearly named function.
- * ✓ Comments explain WHY decisions are made, not just what the code does.
+ * computeHelpRow(gameplan, employees, isWeekend?) → Record<timeSlot, boolean>
+ *   (the far-right "FE HELP" understaffing indicator, computed AFTER assignment)
  *
  * Execution order (matters — do not reorder)
  * ------------------------------------------
- * 1. initializeWithDoor     — every active slot starts as Door (D).
- * 2. assignSecurity         — late-shift SEC employees switch ASAP after
- *                             closing; done first so no later rule overwrites.
- * 3. assignWalks            — hourly walk assignments, fewest-walks-first.
- * 4. assignBreaks           — 1/3 + 2/3 breaks for full shifts;
- *                             midpoint B/D for short shifts.
- *                             Coverage floor enforced here.
- * 5. assignFrontEnd         — overflow Door employees beyond target of 4.
+ * 1. initializeWithDoor  — every active slot starts as Door (D, internal).
+ * 2. assignSecurity      — fixed by closing time; weekday = 1 guard, weekend = 2.
+ * 3. assignBreaks        — ≥6h → two 30-min breaks; <6h → one 15-min B/D.
+ *                          MANDATORY: breaks override the coverage floor.
+ *                          A security guard's last break sits right before SEC.
+ * 4. assignWalks         — one per hour to the last-walk time; 11:00 → the
+ *                          11-AM starter; weekend 18:00 → guard 1; rest fair.
+ * 5. assignPush          — the 30-min slot right after close: keep ≥1 at the
+ *                          exit door, rest → PUSH (cart pushing).
+ * 6. assignFrontEnd      — open-hours Door overflow (> target) → FE; and any
+ *                          on-shift staff after the push window → FE.
+ * 7. assignDoorSides     — LAST: every remaining internal "D" becomes IN
+ *                          (entrance) or OUT (exit). Split per slot: even count
+ *                          → 50/50; odd count → the EXTRA person goes to the
+ *                          EXIT (manager's rule: 3 on door = 1 IN / 2 OUT).
+ *                          Rotation is fairness-first: ~1-hour stints
+ *                          alternating sides, and after any interruption
+ *                          (walk/break/FE) the person returns to whichever side
+ *                          rebalances their own IN/OUT totals — so nobody can
+ *                          camp on their preferred side. doorSide restrictions
+ *                          ("in"-only / "out"-only) are always honoured.
+ *
+ * Determinism: same inputs produce the same plan. Walk tie-breaks use a stable
+ * order (fewest walks → roster order), so there is no randomness.
  */
 
 import type { Employee, Gameplan, TaskCode } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants
+// Time grid
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * All 30-minute scheduling slots in chronological order.
- * Index 0 = 7:00 AM, index 34 = midnight (0:00).
- * Exported so that page.tsx and the CSV parser can share the canonical list.
- */
+/** 30-minute slots, index 0 = 7:00 AM … index 34 = midnight (0:00). */
 export const TIME_SLOTS: readonly string[] = [
   "7:00",  "7:30",  "8:00",  "8:30",  "9:00",  "9:30",
   "10:00", "10:30", "11:00", "11:30", "12:00", "12:30",
@@ -47,72 +54,81 @@ export const TIME_SLOTS: readonly string[] = [
   "22:00", "22:30", "23:00", "23:30", "0:00",
 ];
 
-/**
- * Door coverage must NEVER fall below this value.
- * A Break (B) assignment is only placed when it would leave ≥ this many
- * employees on Door after the break is taken.
- */
-const MIN_DOOR_COVERAGE = 3;
+// Named slot indices used throughout the rules (all relative to TIME_SLOTS).
+const IDX_11AM = 8;      // "11:00" — the special "fresh arrival" walk hour
+const IDX_6PM  = 22;     // "18:00" — weekend guard-1 usually takes this walk
 
-/**
- * Ideal number of employees on Door at any given slot.
- * Employees beyond this count are moved to Front End (FE).
- */
-const TARGET_DOOR_COVERAGE = 4;
+// Door coverage policy.
+const MIN_DOOR_COVERAGE = 3;     // floor (breaks may still override it)
+const TARGET_DOOR_COVERAGE = 4;  // ideal; overflow beyond this goes to FE
 
-/**
- * The slot index at which the warehouse closes.
- * Security (SEC) duty begins here for qualifying late-shift employees.
- * 21:00 is index 28 — a standard Costco weekday closing time.
- */
-const WAREHOUSE_CLOSE_IDX = 28; // TIME_SLOTS[28] === "21:00"
+// FE HELP (understaffing) thresholds — see computeHelpRow.
+const HELP_BUSY_AT_OR_BELOW = 2;     // busy moment with ≤2 on the door → needs help
+const HELP_QUIET_AT_OR_BELOW = 1;    // quiet moment with ≤1 on the door → needs help
 
-/**
- * Any canSec employee whose shift runs PAST warehouse closing is eligible for
- * SEC duty (they will still be on-site after the store closes).
- * This covers the business rule's "Midnight weekdays / 11:30 PM weekends"
- * cases: both result in a shiftEndIdx > WAREHOUSE_CLOSE_IDX.
- */
-const SEC_SHIFT_THRESHOLD = WAREHOUSE_CLOSE_IDX;
-
-/**
- * Maximum search radius (in slots) when hunting for a valid break position.
- * 8 slots = 4 hours on either side of the ideal break point.
- * Beyond this, we give up rather than force a break at an unsafe location.
- */
-const BREAK_SEARCH_RADIUS = 8;
-
-/**
- * Minimum buffer (in slots) from the very start or end of a shift before a
- * break can be placed. Prevents a break in the first or last 30 minutes.
- */
-const BREAK_SHIFT_BUFFER = 1;
+// PUSH cap — at most this many on cart-pushing in the post-close window.
+const MAX_PUSH = 4;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal utilities
+// Day configuration (weekday vs weekend)
 // ─────────────────────────────────────────────────────────────────────────────
 
+type DayConfig = {
+  /** First CLOSED slot — the store entry closes at this slot's start time. */
+  closeIdx: number;
+  /** Security begins half an hour before close. */
+  securityStartIdx: number;
+  /** Last hourly walk happens at this slot (inclusive). */
+  lastWalkIdx: number;
+  /** The single 30-min slot of cart-pushing right after close. */
+  pushIdx: number;
+  /** Number of weekend security guards (1 on weekdays, 2 on weekends). */
+  weekend: boolean;
+};
+
 /**
- * Returns a shallow-copy-of-inner-records clone of a Gameplan.
- * This is the mechanism that guarantees immutability: every helper calls this
- * before making changes, so callers' references are never mutated.
+ * Weekday: entry closes 8:30 PM (idx 27), security 8:00 PM (26), last walk 9 PM (28).
+ * Weekend: entry closes 7:00 PM (idx 24), security 6:30 PM (23), last walk 7 PM (24).
+ * Security always starts the slot before close; PUSH is the close slot itself.
  */
-function cloneGameplan(gameplan: Gameplan): Gameplan {
-  const clone: Gameplan = {};
-  for (const name in gameplan) {
-    // Spread creates a new inner record; the outer record is also new.
-    clone[name] = { ...gameplan[name] };
+function dayConfig(isWeekend: boolean): DayConfig {
+  if (isWeekend) {
+    return { closeIdx: 24, securityStartIdx: 23, lastWalkIdx: 24, pushIdx: 24, weekend: true };
   }
-  return clone;
+  return { closeIdx: 27, securityStartIdx: 26, lastWalkIdx: 28, pushIdx: 27, weekend: false };
 }
 
 /**
- * Counts how many employees hold Door-equivalent coverage at a specific time.
- *
- * WHY D and B/D both count:
- *   B/D is a 15-min break / 15-min door combo. The employee is physically
- *   present at the door for half the slot, so Costco policy treats the slot
- *   as contributing to door coverage.  W, B, SEC, and FE do NOT count.
+ * Auto-detect weekend vs weekday from the roster: a security-capable employee
+ * who finishes at 11:30 PM (idx 33) signals a weekend; midnight (idx 34) a
+ * weekday. Falls back to weekday. Callers may override with an explicit flag.
+ */
+export function detectIsWeekend(employees: readonly Employee[]): boolean {
+  const latestSecEnd = employees
+    .filter((e) => e.canSec)
+    .reduce((max, e) => Math.max(max, e.shiftEndIdx), 0);
+  // 23:30 == idx 33 (weekend close-out); anything earlier than midnight reads as weekend.
+  return latestSecEnd > 0 && latestSecEnd <= 33;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+function cloneGameplan(gameplan: Gameplan): Gameplan {
+  const clone: Gameplan = {};
+  for (const name in gameplan) clone[name] = { ...gameplan[name] };
+  return clone;
+}
+
+function isActiveAt(emp: Employee, slotIdx: number): boolean {
+  return slotIdx >= emp.shiftStartIdx && slotIdx < emp.shiftEndIdx;
+}
+
+/**
+ * Door-equivalent coverage at a slot — what counts as "on the door".
+ * Counts IN + OUT (the final door codes), internal "D" (the pipeline's
+ * pre-side placeholder, also present in legacy saved plans), and B/D.
  */
 function countDoorCoverage(
   gameplan: Gameplan,
@@ -122,163 +138,313 @@ function countDoorCoverage(
   let count = 0;
   for (const emp of employees) {
     const task = gameplan[emp.name]?.[time];
-    if (task === "D" || task === "B/D") count++;
+    if (task === "D" || task === "IN" || task === "OUT" || task === "B/D") count++;
   }
   return count;
 }
 
-/**
- * Returns true when a time slot index falls within an employee's shift.
- *
- * shiftStartIdx is INCLUSIVE; shiftEndIdx is EXCLUSIVE.
- * shiftStartIdx can be negative for pre-7 AM starters — those employees are
- * active from index 0 onwards in the visible grid.
- */
-function isActiveAt(emp: Employee, slotIdx: number): boolean {
-  return slotIdx >= emp.shiftStartIdx && slotIdx < emp.shiftEndIdx;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Rule 1 — Door (D): default assignment
+// Rule 1 — Door (D): default
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * RULE: Door (D) is the default task for every active shift slot.
- *
- * WHY this is first:
- *   Every subsequent rule overrides specific D slots with W, B, SEC, or FE.
- *   Starting from a clean D baseline makes the overrides simple and readable.
- */
 function initializeWithDoor(employees: readonly Employee[]): Gameplan {
   const gameplan: Gameplan = {};
-
   for (const emp of employees) {
     gameplan[emp.name] = {};
     for (let i = 0; i < TIME_SLOTS.length; i++) {
-      const time = TIME_SLOTS[i];
-      // Active slots → Door; outside-shift slots → empty string (not rendered).
-      gameplan[emp.name][time] = isActiveAt(emp, i) ? "D" : "";
+      gameplan[emp.name][TIME_SLOTS[i]] = isActiveAt(emp, i) ? "D" : "";
     }
   }
-
   return gameplan;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Rule 5 — Security (SEC): late-shift authorized employees
+// Security guard identification
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Returns true when the employee qualifies for Security duty.
- *
- * Criteria:
- *   1. Employee is SEC-authorized (canSec).
- *   2. Shift extends past warehouse closing (the employee will be on-site
- *      after the store closes — that is when SEC duty is needed).
- *
- * Per the business rule: this applies to employees whose shifts end at
- * Midnight on weekdays or 11:30 PM on weekends. Both cases result in a
- * shiftEndIdx that exceeds WAREHOUSE_CLOSE_IDX, so a single threshold handles
- * both; `isWeekend` is available for future policy changes.
- */
-function qualifiesForSecurity(emp: Employee, _isWeekend: boolean): boolean {
-  // WHY check shiftEndIdx > threshold (not >=):
-  //   An employee who ends exactly at warehouse closing does not stay after
-  //   closing, so they have no SEC duty to perform.
-  return emp.canSec && emp.shiftEndIdx > SEC_SHIFT_THRESHOLD;
-}
+type Guards = {
+  /** Weekday single guard, or weekend "second" guard (covers until ~11:30 PM). */
+  late: Employee | null;
+  /** Weekend "first" guard — ends 7:30 PM, covers only their last hour. */
+  early: Employee | null;
+  /** Slot where the late guard's SEC duty begins (their 2nd break sits before it). */
+  lateSecStartIdx: number;
+  /** Slot where the early guard's SEC duty begins (weekend only). */
+  earlySecStartIdx: number;
+};
 
 /**
- * RULE: Security (SEC) — qualifying employees are assigned SEC for every slot
- * between warehouse closing and the end of their shift.
- *
- * WHY this runs before Walks and Breaks:
- *   SEC slots are fixed by warehouse closing time and cannot move.
- *   If Walks or Breaks were assigned first, they could accidentally land in
- *   a slot that should be SEC, and later logic would need to undo them.
- *   Processing SEC first avoids that conflict entirely.
+ * Pick the security guard(s).
+ *   Weekday → one guard: the security-capable employee who finishes latest.
+ *   Weekend → two guards:
+ *     • early = a canSec employee ending 7:30 PM (idx 25), preferring the
+ *       11 AM–7:30 PM person; covers only their last hour (securityStart→7:30).
+ *     • late  = the canSec employee finishing latest (~11:30 PM); covers from
+ *       7:30 PM (the handoff) to end of shift.
  */
+function identifyGuards(employees: readonly Employee[], cfg: DayConfig): Guards {
+  const eligible = employees.filter((e) => e.canSec);
+  const latest = eligible.reduce<Employee | null>(
+    (best, e) => (best === null || e.shiftEndIdx > best.shiftEndIdx ? e : best),
+    null
+  );
+
+  if (!cfg.weekend) {
+    return { late: latest, early: null, lateSecStartIdx: cfg.securityStartIdx, earlySecStartIdx: -1 };
+  }
+
+  // Weekend: find the "first" guard — a canSec employee ending 7:30 PM (idx 25),
+  // preferring the 11 AM starter; never the same person as the late guard.
+  const endsAt730 = eligible.filter((e) => e.shiftEndIdx === 25 && e !== latest);
+  const early =
+    endsAt730.find((e) => e.shiftStartIdx === IDX_11AM) ?? endsAt730[0] ?? null;
+
+  // The late guard hands off from the early guard's end (7:30 PM, idx 25); if
+  // there is no early guard, the late guard covers from securityStart.
+  const lateSecStartIdx = early ? 25 : cfg.securityStartIdx;
+  return { late: latest, early, lateSecStartIdx, earlySecStartIdx: cfg.securityStartIdx };
+}
+
 function assignSecurity(
   gameplan: Gameplan,
-  employees: readonly Employee[],
-  isWeekend: boolean
+  guards: Guards
 ): Gameplan {
   const result = cloneGameplan(gameplan);
 
-  for (const emp of employees) {
-    if (!qualifiesForSecurity(emp, isWeekend)) continue;
+  if (guards.early) {
+    // Early guard covers their last hour only: securityStart → end of shift.
+    for (let i = guards.earlySecStartIdx; i < guards.early.shiftEndIdx; i++) {
+      if (i >= 0 && i < TIME_SLOTS.length) result[guards.early.name][TIME_SLOTS[i]] = "SEC";
+    }
+  }
+  if (guards.late) {
+    const start = Math.max(guards.late.shiftStartIdx, guards.lateSecStartIdx);
+    for (let i = start; i < guards.late.shiftEndIdx; i++) {
+      if (i >= 0 && i < TIME_SLOTS.length) result[guards.late.name][TIME_SLOTS[i]] = "SEC";
+    }
+  }
+  return result;
+}
 
-    // SEC starts at warehouse closing, or at the employee's own shift start
-    // if they happen to start after the warehouse closes (edge case).
-    const secStartIdx = Math.max(emp.shiftStartIdx, WAREHOUSE_CLOSE_IDX);
+// ─────────────────────────────────────────────────────────────────────────────
+// Breaks (mandatory; coverage-aware placement)
+// ─────────────────────────────────────────────────────────────────────────────
 
-    for (let i = secStartIdx; i < emp.shiftEndIdx; i++) {
-      if (i >= 0 && i < TIME_SLOTS.length) {
-        result[emp.name][TIME_SLOTS[i]] = "SEC";
+/**
+ * Find the best slot for a break near `targetIdx`, honouring the manager's rule
+ * that breaks should sit close to their target (e.g. an earlier first break) at
+ * a coverage-SAFE slot — not wherever coverage happens to be highest.
+ *
+ * Strategy: scan outward from the target (nearest first, earlier slot winning
+ * ties) and take the first plain-Door slot meeting a coverage tier. We try the
+ * "safe" tier first (door stays ≥ floor after the break), then relax. Breaks are
+ * MANDATORY, so the last tier accepts any plain-Door slot. Returns -1 only when
+ * no plain-Door slot exists in the window at all.
+ */
+function findBreakSlot(
+  gameplan: Gameplan,
+  employees: readonly Employee[],
+  emp: Employee,
+  targetIdx: number,
+  radius: number,
+  avoidIdx: number
+): number {
+  const earliest = Math.max(0, emp.shiftStartIdx) + 1; // not the very first slot
+  const latest = emp.shiftEndIdx - 1;                  // not the very last slot
+
+  // Acceptance tiers on CURRENT coverage: prefer slots where the door stays at
+  // or above the floor after one person steps away, then progressively relax.
+  const tiers = [TARGET_DOOR_COVERAGE, MIN_DOOR_COVERAGE, 0];
+
+  for (const minCoverage of tiers) {
+    for (let k = 0; k <= radius; k++) {
+      // Nearest-first; on a tie the EARLIER slot (target − k) is tried first so
+      // breaks lean earlier, matching the manager's spacing preference.
+      const candidates = k === 0 ? [targetIdx] : [targetIdx - k, targetIdx + k];
+      for (const idx of candidates) {
+        if (idx < earliest || idx >= latest) continue;
+        if (idx < 0 || idx >= TIME_SLOTS.length) continue;
+        if (idx === avoidIdx) continue;
+        const time = TIME_SLOTS[idx];
+        if (gameplan[emp.name][time] !== "D") continue; // only convert plain Door
+        if (countDoorCoverage(gameplan, employees, time) >= minCoverage) return idx;
       }
     }
+  }
+  return -1;
+}
+
+/**
+ * Last-resort break slot when no plain-Door slot is available: breaks outrank
+ * walks, so displace the nearest interior Walk (SEC is never displaced). Returns
+ * -1 only if the whole interior is locked by SEC.
+ */
+function findDisplaceableWalkSlot(
+  gameplan: Gameplan,
+  emp: Employee,
+  targetIdx: number,
+  avoidIdx: number
+): number {
+  const earliest = Math.max(0, emp.shiftStartIdx) + 1;
+  const latest = emp.shiftEndIdx - 1;
+  let best = -1;
+  let bestDistance = Infinity;
+  for (let idx = earliest; idx < latest; idx++) {
+    if (idx === avoidIdx || idx < 0 || idx >= TIME_SLOTS.length) continue;
+    if (gameplan[emp.name][TIME_SLOTS[idx]] !== "W") continue;
+    const distance = Math.abs(idx - targetIdx);
+    if (distance < bestDistance) { best = idx; bestDistance = distance; }
+  }
+  return best;
+}
+
+/**
+ * Place ONE break of `code` for `emp` near `target`, GUARANTEEING placement for
+ * mandatory breaks: try the coverage-aware window first, then the whole shift,
+ * then displace a walk. Returns the slot used, or -1 only if the entire interior
+ * is SEC. Writes the cell on success.
+ */
+function placeBreak(
+  result: Gameplan,
+  employees: readonly Employee[],
+  emp: Employee,
+  target: number,
+  avoidIdx: number,
+  code: TaskCode
+): number {
+  let idx = findBreakSlot(result, employees, emp, target, 5, avoidIdx);
+  if (idx === -1) idx = findBreakSlot(result, employees, emp, target, TIME_SLOTS.length, avoidIdx);
+  if (idx === -1) idx = findDisplaceableWalkSlot(result, emp, target, avoidIdx);
+  if (idx !== -1) result[emp.name][TIME_SLOTS[idx]] = code;
+  return idx;
+}
+
+/**
+ * Assign breaks for one employee, threading the updated plan back out.
+ *   ≥6h → two 30-min breaks (B), MANDATORY (always placed; breaks outrank walks
+ *         and the coverage floor). First a touch earlier than 1/3 for spacing.
+ *   <6h → one 15-min break/door combo (B/D) near the midpoint.
+ * For a security guard, the 2nd break is pinned right before SEC; the first
+ * break then bisects the pre-security stretch so the pair stays balanced.
+ */
+function assignBreaksFor(
+  gameplan: Gameplan,
+  employees: readonly Employee[],
+  emp: Employee,
+  pinnedSecondBreakIdx: number | null
+): Gameplan {
+  const result = cloneGameplan(gameplan);
+  const span = emp.shiftEndIdx - emp.shiftStartIdx;
+
+  if (emp.shiftLengthHours >= 6) {
+    // For a guard, place the pinned 2nd break (right before security) FIRST so
+    // the first break can bisect the remaining pre-security stretch.
+    let pinnedSlot = -1;
+    if (pinnedSecondBreakIdx !== null) {
+      const t = TIME_SLOTS[pinnedSecondBreakIdx];
+      if (t !== undefined && result[emp.name][t] === "D") {
+        result[emp.name][t] = "B";
+        pinnedSlot = pinnedSecondBreakIdx;
+      } else {
+        pinnedSlot = placeBreak(result, employees, emp, pinnedSecondBreakIdx, -1, "B");
+      }
+    }
+
+    // Break 1 — bisect the pre-security stretch when pinned, else ~0.28 (a bit
+    // earlier than 1/3 for spacing).
+    const target1 = pinnedSlot !== -1
+      ? Math.round((Math.max(0, emp.shiftStartIdx) + pinnedSlot) / 2)
+      : Math.round(emp.shiftStartIdx + span * 0.28);
+    const slot1 = placeBreak(result, employees, emp, target1, pinnedSlot, "B");
+
+    // Break 2 for non-guards — near 2/3 (the guard's 2nd break is the pin above).
+    if (pinnedSecondBreakIdx === null) {
+      const target2 = Math.round(emp.shiftStartIdx + span * 0.66);
+      placeBreak(result, employees, emp, target2, slot1, "B");
+    }
+  } else {
+    // Short shift — a single 15-min break/door combo near the midpoint.
+    const target = Math.round(emp.shiftStartIdx + span * 0.5);
+    placeBreak(result, employees, emp, target, -1, "B/D");
   }
 
   return result;
 }
 
+function assignBreaks(
+  gameplan: Gameplan,
+  employees: readonly Employee[],
+  guards: Guards
+): Gameplan {
+  let result = cloneGameplan(gameplan);
+  for (const emp of employees) {
+    // The late/weekday guard takes their 2nd break right before SEC begins.
+    let pinned: number | null = null;
+    if (guards.late && emp.name === guards.late.name) {
+      pinned = guards.lateSecStartIdx - 1;
+    }
+    result = assignBreaksFor(result, employees, emp, pinned);
+  }
+  return result;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Rule 2 — Walk (W): hourly, fairness-distributed
+// Walks (hourly; 11 AM special, weekend 6 PM → guard 1, rest fair)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * RULE: Walk (W) — one capable employee walks the warehouse at the top of
- * every hour.  Fair distribution is enforced by always preferring the
- * employee(s) with the fewest walks completed so far today.  Among equals,
- * the selection is random.
- *
- * Eligibility at a given hour slot:
- *   • canWalk is true.
- *   • The employee is actively on shift.
- *   • The employee is currently assigned Door (D) — not SEC, not on break.
- *     We cannot ask someone who is already occupied to also walk.
- *
- * WHY Walks run after SEC but before Breaks:
- *   SEC slots are now locked, so we correctly exclude SEC employees.
- *   Breaks haven't been assigned yet, so we don't accidentally exclude
- *   someone from walking just because they will later receive a break.
- */
 function assignWalks(
   gameplan: Gameplan,
-  employees: readonly Employee[]
+  employees: readonly Employee[],
+  cfg: DayConfig,
+  guards: Guards
 ): Gameplan {
   const result = cloneGameplan(gameplan);
-
-  // Cumulative walk count per employee — drives fair distribution.
   const walkCounts: Record<string, number> = Object.fromEntries(
     employees.map((e) => [e.name, 0])
   );
 
-  for (let tIdx = 0; tIdx < TIME_SLOTS.length; tIdx++) {
+  const isFreeDoor = (emp: Employee, time: string) => result[emp.name][time] === "D";
+  // Guards already get special walks (11 AM / 6 PM) plus security duty, so they
+  // are de-prioritised for the regular hourly walks to keep distribution fair.
+  const guardNames = new Set(
+    [guards.early?.name, guards.late?.name].filter((n): n is string => Boolean(n))
+  );
+
+  for (let tIdx = 0; tIdx <= cfg.lastWalkIdx && tIdx < TIME_SLOTS.length; tIdx++) {
     const time = TIME_SLOTS[tIdx];
+    if (!time.endsWith(":00")) continue; // walks only at the top of the hour
 
-    // Walks are only required at the exact start of each hour (XX:00).
-    if (!time.endsWith(":00")) continue;
+    // Special 1 — the 11 AM walk goes to whoever's shift starts at 11.
+    if (tIdx === IDX_11AM) {
+      const starter = employees.find(
+        (e) => e.shiftStartIdx === IDX_11AM && e.canWalk && isFreeDoor(e, time)
+      );
+      if (starter) {
+        result[starter.name][time] = "W";
+        walkCounts[starter.name]++;
+        continue;
+      }
+    }
 
-    // Build the eligible pool: walk-authorized, active, on plain Door.
+    // Special 2 — weekend 6 PM walk goes to the early guard if available.
+    if (cfg.weekend && tIdx === IDX_6PM && guards.early) {
+      const g1 = guards.early;
+      if (g1.canWalk && isFreeDoor(g1, time)) {
+        result[g1.name][time] = "W";
+        walkCounts[g1.name]++;
+        continue;
+      }
+    }
+
+    // Default — fewest walks first, stable roster-order tie-break (no randomness).
     const eligible = employees.filter(
-      (emp) =>
-        emp.canWalk &&
-        isActiveAt(emp, tIdx) &&
-        result[emp.name][time] === "D"
+      (e) => e.canWalk && isActiveAt(e, tIdx) && isFreeDoor(e, time)
     );
-
-    if (eligible.length === 0) continue; // No one available — skip this hour.
-
-    // Find the minimum walk count among eligible employees.
+    if (eligible.length === 0) continue;
     const minWalks = Math.min(...eligible.map((e) => walkCounts[e.name]));
-
-    // Collect all employees tied at the minimum (fairness pool).
-    const candidates = eligible.filter((e) => walkCounts[e.name] === minWalks);
-
-    // Random selection within the fairness pool.
-    const chosen = candidates[Math.floor(Math.random() * candidates.length)];
-
+    const tied = eligible.filter((e) => walkCounts[e.name] === minWalks);
+    // Prefer a non-guard among the fewest-walked; fall back to roster order.
+    const chosen = tied.find((e) => !guardNames.has(e.name)) ?? tied[0];
     result[chosen.name][time] = "W";
     walkCounts[chosen.name]++;
   }
@@ -287,221 +453,230 @@ function assignWalks(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Rule 3 & 4 — Breaks (B and B/D): coverage-safe placement
+// PUSH (the 30-min slot right after close)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Locates the best slot for a break of the given type, searching outward from
- * `targetIdx` in alternating ±offsets (centre-out scan).
- *
- * Constraints enforced:
- *   • The slot must fall inside the employee's visible shift, with a small
- *     buffer from either end (don't break right at arrival or departure).
- *   • The employee must currently be on plain Door (D) — not W, B, SEC, FE.
- *   • Coverage floor:
- *       - "B" (full break): employee leaves Door → coverage drops by 1.
- *         We require current coverage > MIN_DOOR_COVERAGE so that coverage
- *         after = current − 1 ≥ MIN_DOOR_COVERAGE.
- *       - "B/D" (combo): employee stays on Door for half the slot → B/D still
- *         counts toward coverage.  Coverage stays the same, so we only need
- *         current ≥ MIN_DOOR_COVERAGE.
- *
- * Returns the chosen slot index, or -1 if no valid slot is found within the
- * search radius.  The caller must handle -1 gracefully (no break assigned).
+ * At the close slot, the entry is shut but the exit stays open ~30 min: keep
+ * ONE person on the door (D) as the exit-door attendant, leave any SEC/W/break
+ * as-is, and send everyone else still on shift to PUSH (cart pushing), capped at
+ * MAX_PUSH. (Anything beyond the push window is handled by assignFrontEnd.)
  */
-function findBreakSlot(
+function assignPush(
   gameplan: Gameplan,
   employees: readonly Employee[],
-  emp: Employee,
-  targetIdx: number,
-  type: "B" | "B/D"
-): number {
-  // Establish the valid search window within the employee's visible shift.
-  // Math.max(0, ...) ensures we don't reference negative (pre-7 AM) indices.
-  const earliest = Math.max(0, emp.shiftStartIdx) + BREAK_SHIFT_BUFFER;
-  const latest   = emp.shiftEndIdx - BREAK_SHIFT_BUFFER;
+  cfg: DayConfig
+): Gameplan {
+  const result = cloneGameplan(gameplan);
+  const time = TIME_SLOTS[cfg.pushIdx];
+  if (time === undefined) return result;
 
-  for (let offset = 0; offset <= BREAK_SEARCH_RADIUS; offset++) {
-    // Generate candidate offsets: 0, +1, -1, +2, -2, … (centre-out).
-    const deltas = offset === 0 ? [0] : [offset, -offset];
+  // Plain-Door people present in the close slot are the movable pool.
+  const onDoor = employees.filter((e) => result[e.name][time] === "D");
+  if (onDoor.length === 0) return result;
+  // Keep one at the exit door — prefer someone allowed at the exit, so an
+  // entrance-only (doorSide "in") person is never made the exit attendant.
+  const keeper = onDoor.find((e) => (e.doorSide ?? "both") !== "in") ?? onDoor[0];
+  let pushed = 0;
+  for (const emp of onDoor) {
+    if (emp.name === keeper.name) continue;
+    if (pushed >= MAX_PUSH) break;
+    result[emp.name][time] = "PUSH";
+    pushed++;
+  }
+  return result;
+}
 
-    for (const delta of deltas) {
-      const idx = targetIdx + delta;
+// ─────────────────────────────────────────────────────────────────────────────
+// Front End (open-hours overflow + post-push leftover)
+// ─────────────────────────────────────────────────────────────────────────────
 
-      // Must be within the employee's valid break window.
-      if (idx < earliest || idx >= latest) continue;
+function assignFrontEnd(
+  gameplan: Gameplan,
+  employees: readonly Employee[],
+  cfg: DayConfig
+): Gameplan {
+  const result = cloneGameplan(gameplan);
 
-      // Must be a TIME_SLOTS index that exists.
-      if (idx < 0 || idx >= TIME_SLOTS.length) continue;
+  for (let tIdx = 0; tIdx < TIME_SLOTS.length; tIdx++) {
+    const time = TIME_SLOTS[tIdx];
 
-      const time = TIME_SLOTS[idx];
-
-      // Only override plain Door slots; never overwrite W, SEC, or existing breaks.
-      if (gameplan[emp.name][time] !== "D") continue;
-
-      const doorNow = countDoorCoverage(gameplan, employees, time);
-
-      if (type === "B") {
-        // This employee's D→B means coverage drops by 1.
-        // Safe only when we currently have strictly more than the minimum.
-        if (doorNow > MIN_DOOR_COVERAGE) return idx;
-      } else {
-        // "B/D" — this employee stays counted as Door (D→B/D, no coverage drop).
-        // Safe whenever current coverage meets or exceeds the minimum.
-        if (doorNow >= MIN_DOOR_COVERAGE) return idx;
+    if (tIdx < cfg.closeIdx) {
+      // Open hours: trim Door overflow beyond the target down to FE.
+      const coverage = countDoorCoverage(result, employees, time);
+      if (coverage <= TARGET_DOOR_COVERAGE) continue;
+      let excess = coverage - TARGET_DOOR_COVERAGE;
+      for (const emp of employees) {
+        if (excess <= 0) break;
+        if (result[emp.name][time] === "D") {
+          result[emp.name][time] = "FE";
+          excess--;
+        }
+      }
+    } else if (tIdx > cfg.pushIdx) {
+      // After the push window: anyone still on plain Door helps Front End.
+      for (const emp of employees) {
+        if (result[emp.name][time] === "D") result[emp.name][time] = "FE";
       }
     }
   }
-
-  // Could not safely schedule a break without violating coverage rules.
-  return -1;
-}
-
-/**
- * RULE: Full-shift Break (B) — employees on shifts of 8 or more hours receive
- * two 30-minute breaks, placed near the 1/3 and 2/3 marks of their shift.
- *
- * WHY 1/3 and 2/3?
- *   Spreading breaks evenly prevents long unbroken stretches for any employee
- *   while keeping door coverage predictable (one person off at a time).
- *
- * WHY the second break is searched AFTER the first is placed?
- *   Once break #1 is inserted, door coverage at that slot has changed.
- *   Searching for break #2 on the updated Gameplan avoids double-counting
- *   coverage and ensures the second break is placed safely.
- */
-function assignFullShiftBreaks(
-  gameplan: Gameplan,
-  employees: readonly Employee[],
-  emp: Employee
-): Gameplan {
-  // We need a mutable local copy so we can place B1, recount, then place B2.
-  let result = cloneGameplan(gameplan);
-
-  // Use the full shift span (including pre-7 AM) for accurate 1/3 and 2/3 targets.
-  const shiftSpan = emp.shiftEndIdx - emp.shiftStartIdx;
-
-  // Break #1 — near the 1/3 mark.
-  const target1 = Math.round(emp.shiftStartIdx + shiftSpan * (1 / 3));
-  const slot1   = findBreakSlot(result, employees, emp, target1, "B");
-  if (slot1 !== -1) {
-    result[emp.name][TIME_SLOTS[slot1]] = "B";
-    // result is now the updated Gameplan that reflects B1 being placed.
-  }
-
-  // Break #2 — near the 2/3 mark, using the coverage-updated result from B1.
-  const target2 = Math.round(emp.shiftStartIdx + shiftSpan * (2 / 3));
-  const slot2   = findBreakSlot(result, employees, emp, target2, "B");
-  if (slot2 !== -1) {
-    result[emp.name][TIME_SLOTS[slot2]] = "B";
-  }
-
   return result;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Door sides — IN (entrance) / OUT (exit), fair hourly rotation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Per-person rotation memory used while sweeping the day slot by slot. */
+type SideState = {
+  in: number;        // total 30-min slots spent at the entrance so far
+  out: number;       // total 30-min slots spent at the exit so far
+  last: "IN" | "OUT" | null; // side of their most recent door stint
+  lastIdx: number;   // slot index of their most recent door assignment
+  stint: number;     // consecutive slots on `last` side (resets on interruption)
+};
+
+/** ~1 hour = 2 slots: the natural stint length before swapping sides. */
+const STINT_SLOTS = 2;
+
 /**
- * RULE: Short-shift Break/Door (B/D) — employees on 4–5 hour shifts receive
- * one 15-minute break / 15-minute door combo near the midpoint of their shift.
+ * Final pass — convert every remaining internal "D" cell into IN or OUT.
  *
- * WHY B/D instead of a full B?
- *   Shorter shifts do not earn a full 30-minute paid break under Costco policy.
- *   The B/D hybrid lets the employee step away briefly without fully vacating
- *   the door, so coverage is maintained even with fewer total staff.
+ * Per-slot split (manager's rule): exit gets the extra when odd.
+ *   4 → 2 IN / 2 OUT · 3 → 1 IN / 2 OUT · 2 → 1 / 1 · 1 → OUT.
+ * After the entry closes, everyone left on the door is OUT (exit only).
+ *
+ * Per-person rotation (fairness-first): stay on a side for ~1 hour, then swap;
+ * after an interruption (walk, break, FE…) return on whichever side rebalances
+ * that person's own IN/OUT totals. doorSide "in"/"out" restrictions are hard
+ * constraints and shift the flexible quota (exit absorbs the slack).
  */
-function assignShortShiftBreak(
+function assignDoorSides(
   gameplan: Gameplan,
   employees: readonly Employee[],
-  emp: Employee
+  cfg: DayConfig
 ): Gameplan {
   const result = cloneGameplan(gameplan);
+  const state: Record<string, SideState> = Object.fromEntries(
+    employees.map((e) => [e.name, { in: 0, out: 0, last: null, lastIdx: -99, stint: 0 }])
+  );
 
-  const shiftSpan = emp.shiftEndIdx - emp.shiftStartIdx;
-  const target    = Math.round(emp.shiftStartIdx + shiftSpan * 0.5);
-  const slot      = findBreakSlot(result, employees, emp, target, "B/D");
+  const commit = (emp: Employee, tIdx: number, side: "IN" | "OUT") => {
+    result[emp.name][TIME_SLOTS[tIdx]] = side;
+    const s = state[emp.name];
+    s.stint = s.last === side && s.lastIdx === tIdx - 1 ? s.stint + 1 : 1;
+    s.last = side;
+    s.lastIdx = tIdx;
+    if (side === "IN") s.in++;
+    else s.out++;
+  };
 
-  if (slot !== -1) {
-    result[emp.name][TIME_SLOTS[slot]] = "B/D";
-  }
+  for (let tIdx = 0; tIdx < TIME_SLOTS.length; tIdx++) {
+    const time = TIME_SLOTS[tIdx];
+    const onDoor = employees.filter((e) => result[e.name][time] === "D");
+    if (onDoor.length === 0) continue;
 
-  return result;
-}
-
-/**
- * Dispatcher that routes each employee to the correct break rule based on
- * their shift length, then threads the updated Gameplan through each employee
- * in sequence so coverage counts are always current.
- *
- * Routing:
- *   ≥ 8 hours   → two B breaks (Rule 3 — full shift)
- *   4–5 hours   → one B/D break (Rule 4 — short shift)
- *   other       → no break (5–8 h range is not specified by current policy)
- */
-function assignBreaks(
-  gameplan: Gameplan,
-  employees: readonly Employee[]
-): Gameplan {
-  // Thread the Gameplan through each employee in sequence.
-  // WHY sequential (not parallel)?
-  //   When we place a break for employee A, it changes door coverage at that
-  //   slot.  Employee B's break search must see that updated coverage so it
-  //   doesn't place two breaks in the same slot and undercount coverage.
-  let result = cloneGameplan(gameplan);
-
-  for (const emp of employees) {
-    if (emp.shiftLengthHours >= 8) {
-      result = assignFullShiftBreaks(result, employees, emp);
-    } else if (emp.shiftLengthHours >= 4 && emp.shiftLengthHours <= 5) {
-      result = assignShortShiftBreak(result, employees, emp);
+    // Entry closed → the door IS the exit. (Restrictions still win: an
+    // entrance-only person should never be here thanks to assignPush, but if a
+    // manager edit puts them here, keep them IN rather than break the rule.)
+    if (tIdx >= cfg.closeIdx) {
+      for (const emp of onDoor) {
+        commit(emp, tIdx, (emp.doorSide ?? "both") === "in" ? "IN" : "OUT");
+      }
+      continue;
     }
-    // Shifts between 5 h and 8 h, or under 4 h, receive no break per policy.
+
+    // Hard restrictions first; they shift the flexible quotas.
+    const forcedIn = onDoor.filter((e) => (e.doorSide ?? "both") === "in");
+    const forcedOut = onDoor.filter((e) => (e.doorSide ?? "both") === "out");
+    const flexible = onDoor.filter((e) => (e.doorSide ?? "both") === "both");
+    for (const emp of forcedIn) commit(emp, tIdx, "IN");
+    for (const emp of forcedOut) commit(emp, tIdx, "OUT");
+
+    // Quotas on the whole door group: IN = floor(n/2), the extra goes OUT.
+    const inQuota = Math.floor(onDoor.length / 2);
+    let inLeft = Math.min(Math.max(0, inQuota - forcedIn.length), flexible.length);
+    let outLeft = flexible.length - inLeft;
+
+    // Each flexible person's desired side + how strongly they want it:
+    //   3 — mid-stint (< 1h on this side, uninterrupted): keep the side.
+    //   2 — stint complete: swap sides.
+    //   1 — fresh/returning from interruption: pick the side that rebalances
+    //       their own totals (tie → opposite of last side, else OUT).
+    const opposite = (s: "IN" | "OUT"): "IN" | "OUT" => (s === "IN" ? "OUT" : "IN");
+    const wishes = flexible.map((emp, rosterIdx) => {
+      const s = state[emp.name];
+      let desired: "IN" | "OUT";
+      let strength: number;
+      if (s.last && s.lastIdx === tIdx - 1 && s.stint < STINT_SLOTS) {
+        desired = s.last;
+        strength = 3;
+      } else if (s.last && s.lastIdx === tIdx - 1) {
+        desired = opposite(s.last);
+        strength = 2;
+      } else {
+        desired =
+          s.in < s.out ? "IN" : s.in > s.out ? "OUT" : s.last ? opposite(s.last) : "OUT";
+        strength = 1;
+      }
+      const imbalance = Math.abs(s.in - s.out);
+      return { emp, desired, strength, imbalance, rosterIdx };
+    });
+
+    // Strongest wishes first; bigger personal imbalance breaks ties; roster
+    // order keeps it deterministic.
+    wishes.sort(
+      (a, b) => b.strength - a.strength || b.imbalance - a.imbalance || a.rosterIdx - b.rosterIdx
+    );
+    for (const w of wishes) {
+      let side: "IN" | "OUT" = w.desired;
+      if (side === "IN" && inLeft === 0) side = "OUT";
+      if (side === "OUT" && outLeft === 0) side = "IN";
+      if (side === "IN") inLeft--;
+      else outLeft--;
+      commit(w.emp, tIdx, side);
+    }
   }
 
   return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Rule 6 — Front End (FE): Door overflow
+// FE HELP indicator (far-right column, computed last)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * RULE: Front End (FE) — after Walks, Breaks, and SEC are fully resolved,
- * any time slot where total Door coverage exceeds TARGET_DOOR_COVERAGE (4)
- * has its excess plain-Door employees reassigned to Front End.
- *
- * WHY only plain D (not B/D) is converted?
- *   B/D employees are mid-break and cannot be moved to another assignment.
- *   Only employees on full Door duty are redirectable without disrupting
- *   their break schedule.
- *
- * WHY this runs last?
- *   FE is the residual category.  We must know the final Walk and Break
- *   assignments before we can correctly count Door coverage and identify
- *   actual overflow.
+ * Per-slot understaffing flag for the far-right "FE HELP" column. A slot needs
+ * help when the door is too thin for how busy it is:
+ *   • busy moment  → ≤ 2 on the door
+ *   • quiet moment → ≤ 1 on the door
+ * "Busy" = open hours, minus the last hour before close on weekdays; weekends
+ * are busy throughout. Closed slots (and slots with nobody on shift) never flag.
  */
-function assignFrontEnd(
+export function computeHelpRow(
   gameplan: Gameplan,
-  employees: readonly Employee[]
-): Gameplan {
-  const result = cloneGameplan(gameplan);
+  employees: readonly Employee[],
+  isWeekend: boolean = false
+): Record<string, boolean> {
+  const cfg = dayConfig(isWeekend);
+  const help: Record<string, boolean> = {};
 
-  for (const time of TIME_SLOTS) {
-    // Count total Door-equivalent coverage (D + B/D).
-    const doorCoverage = countDoorCoverage(result, employees, time);
-    if (doorCoverage <= TARGET_DOOR_COVERAGE) continue;
+  for (let tIdx = 0; tIdx < TIME_SLOTS.length; tIdx++) {
+    const time = TIME_SLOTS[tIdx];
+    help[time] = false;
+    if (tIdx >= cfg.closeIdx) continue; // closed — no door-help expectation
 
-    // Identify employees on plain Door who are available to move to FE.
-    // (B/D employees cannot be moved — see WHY note above.)
-    const reassignable = employees.filter((e) => result[e.name][time] === "D");
-    let excess = doorCoverage - TARGET_DOOR_COVERAGE;
+    const anyoneActive = employees.some((e) => isActiveAt(e, tIdx));
+    if (!anyoneActive) continue;
 
-    for (const emp of reassignable) {
-      if (excess <= 0) break;
-      result[emp.name][time] = "FE";
-      excess--;
+    const coverage = countDoorCoverage(gameplan, employees, time);
+    // Weekday: the last hour before close (two slots) is the quiet stretch.
+    const busy = cfg.weekend ? true : tIdx < cfg.closeIdx - 2;
+    if (busy ? coverage <= HELP_BUSY_AT_OR_BELOW : coverage <= HELP_QUIET_AT_OR_BELOW) {
+      help[time] = true;
     }
   }
-
-  return result;
+  return help;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -509,33 +684,27 @@ function assignFrontEnd(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * generateGameplan — the core scheduling engine.
+ * generateGameplan — the v2 scheduling engine.
  *
- * Pure function: given a list of employees (and whether it is a weekend),
- * returns a fully populated Gameplan grid that satisfies all six business rules:
- *
- *   1. Door (D)   — default for every active slot; target of 4 at all times.
- *   2. Walk (W)   — one capable employee at each hour start, fewest-first.
- *   3. Break (B)  — two 30-min breaks for full shifts, coverage ≥ 3 enforced.
- *   4. B/D        — one 15-min break combo for 4–5 h shifts.
- *   5. SEC        — authorized employees cover post-closing slots.
- *   6. FE         — overflow Door employees beyond 4 go to Front End.
- *
- * @param employees  List of employees parsed from the schedule file.
- * @param isWeekend  True when generating a weekend Gameplan. Affects SEC
- *                   eligibility thresholds (reserved for future policy changes).
- * @returns          Gameplan: Record<employeeName, Record<timeSlot, TaskCode>>
+ * @param employees  Roster parsed from the schedule.
+ * @param isWeekend  Weekend vs weekday ruleset. If omitted, auto-detected from
+ *                   the roster (a canSec employee ending 11:30 PM → weekend).
  */
 export function generateGameplan(
   employees: readonly Employee[],
-  isWeekend: boolean = false
+  isWeekend?: boolean
 ): Gameplan {
-  // Each step returns a brand-new Gameplan; nothing is ever mutated in place.
-  const initialized  = initializeWithDoor(employees);
-  const withSecurity = assignSecurity(initialized, employees, isWeekend);
-  const withWalks    = assignWalks(withSecurity, employees);
-  const withBreaks   = assignBreaks(withWalks, employees);
-  const withFrontEnd = assignFrontEnd(withBreaks, employees);
+  const weekend = isWeekend ?? detectIsWeekend(employees);
+  const cfg = dayConfig(weekend);
+  const guards = identifyGuards(employees, cfg);
 
-  return withFrontEnd;
+  const withDoor     = initializeWithDoor(employees);
+  const withSecurity = assignSecurity(withDoor, guards);
+  const withBreaks   = assignBreaks(withSecurity, employees, guards);
+  const withWalks    = assignWalks(withBreaks, employees, cfg, guards);
+  const withPush     = assignPush(withWalks, employees, cfg);
+  const withFrontEnd = assignFrontEnd(withPush, employees, cfg);
+  const withSides    = assignDoorSides(withFrontEnd, employees, cfg);
+
+  return withSides;
 }

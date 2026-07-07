@@ -31,13 +31,27 @@
   --task-w-text: #1d4ed8;
   --task-d-bg: #fef9c3;
   --task-d-text: #a16207;
+  /* IN = entrance (teal), OUT = exit (the old door yellow). Legacy "D" keeps
+     the yellow tokens so pre-IN/OUT saved plans still render. */
+  --task-in-bg: #ccfbf1;
+  --task-in-text: #0f766e;
+  --task-out-bg: #fef9c3;
+  --task-out-text: #a16207;
   --task-b-bg: #dcfce7;
   --task-b-text: #15803d;
   --task-fe-bg: #fce7f3;
   --task-fe-text: #be185d;
   --task-sec-bg: #e0e7ff;
   --task-sec-text: #4338ca;
+  --task-push-bg: #ffedd5;
+  --task-push-text: #c2410c;
   --task-none-bg: #ffffff;
+
+  /* Alert / danger — stays RED in both themes (unlike --accent-primary, which
+     becomes blue in dark mode). Use for FE HELP and under-coverage warnings. */
+  --alert-danger: #E31837;
+  --alert-bg: #fee2e2;
+  --alert-text: #b91c1c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -60,13 +74,24 @@
     --task-w-text: #bfdbfe;
     --task-d-bg: #713f12;
     --task-d-text: #fef08a;
+    --task-in-bg: #134e4a;
+    --task-in-text: #99f6e4;
+    --task-out-bg: #713f12;
+    --task-out-text: #fef08a;
     --task-b-bg: #14532d;
     --task-b-text: #bbf7d0;
     --task-fe-bg: #831843;
     --task-fe-text: #fbcfe8;
     --task-sec-bg: #312e81;
     --task-sec-text: #c7d2fe;
+    --task-push-bg: #7c2d12;
+    --task-push-text: #fed7aa;
     --task-none-bg: #1e293b;
+
+    /* Danger stays red (brightened for dark surfaces); alert fill goes dark. */
+    --alert-danger: #ef4444;
+    --alert-bg: #450a0a;
+    --alert-text: #fecaca;
   }
 }
 
@@ -143,4 +168,30 @@ body, html {
   max-width: 1200px;
   margin: 0 auto;
   padding: 2rem;
+}
+
+/* ── Print: show ONLY the Member Service Gameplan form on an A4 page ──────── */
+#gameplan-print {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+  /* Hide the entire on-screen app; show only the printable form. */
+  .app-screen {
+    display: none !important;
+  }
+  #gameplan-print {
+    display: block !important;
+    color: #000;
+  }
+  /* Force grey cells / borders to actually print. */
+  #gameplan-print,
+  #gameplan-print * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }

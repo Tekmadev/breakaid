@@ -44,3 +44,6 @@ next-env.d.ts
 *.xlsx
 *.csv
 !Member Service Gameplan Template*.csv
+
+# feedback capture exports (temporary; may contain employee names)
+/feedback/*.json
