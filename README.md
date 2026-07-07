@@ -29,6 +29,8 @@ A Next.js 16 web app that helps Costco managers auto-generate the daily 30-minut
 | `SEC` | Security | Authorized late-shift employees only (Midnight weekdays, 11:30 PM weekends) |
 | `FE` | Front End | Overflow when Door > 4 and all Walks/Breaks are covered |
 
+There is is also `IN` and `OUT` instead of `D`
+
 > Coverage constraint: a break is never assigned if it would drop Door coverage below 3 people — the engine shifts it to the closest valid slot.
 
 ## Getting started
