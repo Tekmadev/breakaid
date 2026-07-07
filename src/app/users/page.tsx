@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import {
   ArrowLeft,
   ShieldCheck,
@@ -15,10 +14,10 @@ import {
 } from "lucide-react";
 import type { EmployeeRecord } from "@/lib/types";
 import { employeeStore } from "@/lib/employeeStore";
-import SignOutButton from "@/components/SignOutButton";
+import AppHeader from "@/components/AppHeader";
 
 /**
- * Users — manager-only account administration (backed by /api/admin/users).
+ * Users - manager-only account administration (backed by /api/admin/users).
  *
  * Managers: full access to the whole app. Viewers: door staff accounts that
  * can ONLY see the read-only /view page on their phone; linking a viewer to a
@@ -38,9 +37,9 @@ type UserSummary = {
 };
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return " - ";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return " - ";
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
@@ -76,7 +75,7 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    // Fetch-on-mount: load() is async — every setState inside it runs after an
+    // Fetch-on-mount: load() is async - every setState inside it runs after an
     // await, never synchronously in the effect body (rule can't see through it).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
@@ -172,52 +171,10 @@ export default function UsersPage() {
 
   return (
     <div className="animate-fade-in" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <header
-        className="header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          borderBottom: "3px solid var(--accent-secondary)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="https://upload.wikimedia.org/wikipedia/commons/5/59/Costco_Wholesale_logo_2010-10-26.svg"
-            alt="Costco Wholesale"
-            style={{ height: "32px" }}
-          />
-          <h1
-            style={{
-              color: "var(--accent-secondary)",
-              borderLeft: "2px solid var(--border-color)",
-              paddingLeft: "1rem",
-              marginLeft: "0.5rem",
-            }}
-          >
-            User Accounts
-          </h1>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <Link
-            href="/"
-            className="btn-primary"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              textDecoration: "none",
-              backgroundColor: "var(--bg-tertiary)",
-              color: "var(--text-primary)",
-            }}
-          >
-            <ArrowLeft size={18} />
-            Back to Gameplan
-          </Link>
-          <SignOutButton />
-        </div>
-      </header>
+      <AppHeader
+        title="User Accounts"
+        actions={[{ kind: "link", label: "Back to Gameplan", href: "/", icon: <ArrowLeft size={18} /> }]}
+      />
 
       <main className="container" style={{ flex: 1, maxWidth: "1100px" }}>
         <div className="glass-panel" style={{ padding: "2rem" }}>
@@ -228,7 +185,7 @@ export default function UsersPage() {
           <p style={{ color: "var(--text-secondary)", marginBottom: "1.25rem", fontSize: "0.9rem" }}>
             <strong>Managers</strong> can build, edit and finalize gameplans.{" "}
             <strong>Viewers</strong> are door-staff accounts: on their phone they only see the
-            read-only day view — who&apos;s at the entrance/exit right now and the full table. Link a
+            read-only day view - who&apos;s at the entrance/exit right now and the full table. Link a
             viewer to a roster name and their view highlights their own assignment.
           </p>
 
@@ -298,7 +255,7 @@ export default function UsersPage() {
               <label style={{ ...fieldStyle, flex: "0 1 200px" }}>
                 <span style={labelStyle}>Linked employee</span>
                 <select value={newEmployee} onChange={(e) => setNewEmployee(e.target.value)} style={inputStyle}>
-                  <option value="">— not linked —</option>
+                  <option value=""> - not linked - </option>
                   {employees.map((emp) => (
                     <option key={emp.name} value={emp.name}>
                       {emp.name}
@@ -372,7 +329,7 @@ export default function UsersPage() {
                         <td style={tdStyle}>
                           {u.developer ? (
                             <span
-                              title="Permanent developer account — cannot be demoted or deleted"
+                              title="Permanent developer account - cannot be demoted or deleted"
                               style={{
                                 display: "inline-flex",
                                 alignItems: "center",
@@ -411,7 +368,7 @@ export default function UsersPage() {
                                 onChange={(e) => patchUser(u, { employeeName: e.target.value || null })}
                                 style={{ ...inputStyle, padding: "0.3rem 0.4rem", fontSize: "0.8rem", width: "auto" }}
                               >
-                                <option value="">— not linked —</option>
+                                <option value=""> - not linked - </option>
                                 {employees.map((emp) => (
                                   <option key={emp.name} value={emp.name}>
                                     {emp.name}
@@ -420,7 +377,7 @@ export default function UsersPage() {
                               </select>
                             </span>
                           ) : (
-                            <span style={{ color: "var(--text-muted)" }}>—</span>
+                            <span style={{ color: "var(--text-muted)" }}> - </span>
                           )}
                         </td>
                         <td style={{ ...tdStyle, color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "nowrap" }}>

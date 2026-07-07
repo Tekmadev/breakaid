@@ -1,11 +1,11 @@
 /**
- * printLayout.ts — shared constants + helpers for the two "paper form" outputs:
+ * printLayout.ts - shared constants + helpers for the two "paper form" outputs:
  * the browser-print A4 form (GameplanPrint.tsx) and the Excel export
  * (excelExport.ts). Both reproduce the real Costco "Member Service Gameplan"
  * sheet, so their layout facts live in one place.
  */
 
-// TIME_SLOTS index 2 = "8:00", index 29 = "21:30" (inclusive) — the paper's
+// TIME_SLOTS index 2 = "8:00", index 29 = "21:30" (inclusive) - the paper's
 // fixed window. 28 time rows.
 export const PRINT_START_IDX = 2;
 export const PRINT_END_IDX = 29;
@@ -14,8 +14,18 @@ export const PRINT_END_IDX = 29;
 // form with trailing blank columns, exactly like the printed sheet.
 export const PRINT_MIN_COLS = 13;
 
-/** Off-shift cell grey — matches the photocopied form. */
+/** Off-shift cell grey - matches the photocopied form. */
 export const PRINT_GREY = "#d3d3d3";
+
+/**
+ * Codes printed in BOLD on the paper form (the "action" codes managers scan
+ * for). Everything else - IN, OUT, PUSH, B/D, legacy D - prints regular weight.
+ */
+export const BOLD_CODES: ReadonlySet<string> = new Set(["B", "W", "SEC", "FE", "FE HELP"]);
+
+export function isBoldCode(code: string): boolean {
+  return BOLD_CODES.has(code);
+}
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",

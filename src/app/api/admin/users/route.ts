@@ -1,5 +1,5 @@
 /**
- * /api/admin/users — manager-only account administration.
+ * /api/admin/users - manager-only account administration.
  *
  * GET    → list all accounts (id, email, role, linked employee, timestamps)
  * POST   → create an account  { email, password, role, employeeName? }
@@ -9,17 +9,17 @@
  * Security model:
  *  - Every method first verifies the CALLER is a signed-in manager via the
  *    session cookies (see supabaseServer.ts). Viewers and anonymous callers
- *    get 403/401 — the proxy also bounces them, but this guard is the real
+ *    get 403/401 - the proxy also bounces them, but this guard is the real
  *    boundary for direct API calls.
  *  - Mutations use the service_role key (SUPABASE_SERVICE_ROLE_KEY). That key
  *    is a SERVER-ONLY secret: no NEXT_PUBLIC_ prefix, so Next.js never inlines
  *    it into the browser bundle. It must never appear in client code.
  *  - role / employee_name are written to app_metadata, which only this admin
- *    API can set — users cannot edit their own app_metadata, so a viewer can
+ *    API can set - users cannot edit their own app_metadata, so a viewer can
  *    never promote themselves.
  *  - You cannot demote or delete YOUR OWN account (lockout protection).
  *  - THE DEVELOPER ACCOUNT (app_metadata.developer === true) is untouchable:
- *    no manager can change its role, link, password, or delete it — only the
+ *    no manager can change its role, link, password, or delete it - only the
  *    developer themself may update their own password. This API NEVER writes
  *    the developer flag, so it cannot be granted or revoked from the app;
  *    it was set once, server-side, and is permanent.
@@ -63,7 +63,7 @@ async function requireManagerAndAdmin() {
   if (!admin) {
     return {
       error: Response.json(
-        { error: "Server is missing SUPABASE_SERVICE_ROLE_KEY — add it to .env.local (server-only) and restart." },
+        { error: "Server is missing SUPABASE_SERVICE_ROLE_KEY - add it to .env.local (server-only) and restart." },
         { status: 500 }
       ),
     };
@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
   const { data, error } = await gate.admin.auth.admin.createUser({
     email,
     password,
-    email_confirm: true, // no confirmation email — the manager hands out credentials
+    email_confirm: true, // no confirmation email - the manager hands out credentials
     app_metadata: { role, employee_name: employeeName },
   });
   if (error) return Response.json({ error: error.message }, { status: 400 });
@@ -169,7 +169,7 @@ export async function PATCH(request: NextRequest) {
   const role = targetIsDeveloper ? "manager" : asRole(body.role);
   if (body.id === gate.caller.id && role !== "manager") {
     return Response.json(
-      { error: "You can't demote your own account — ask the other manager." },
+      { error: "You can't demote your own account - ask the other manager." },
       { status: 400 }
     );
   }
@@ -179,7 +179,7 @@ export async function PATCH(request: NextRequest) {
 
   // app_metadata is sent WHOLE (role + employee link together) because the
   // admin update replaces the object rather than merging keys. The developer
-  // flag is carried through unchanged — this API never grants or revokes it.
+  // flag is carried through unchanged - this API never grants or revokes it.
   const attrs: {
     password?: string;
     app_metadata: { role: Role; developer?: boolean; employee_name: string | null };
@@ -208,9 +208,15 @@ export async function DELETE(request: NextRequest) {
     return Response.json({ error: "You can't delete your own account." }, { status: 400 });
   }
 
-  // The developer account can never be deleted — by anyone.
-  const { data: target } = await gate.admin.auth.admin.getUserById(body.id);
-  if ((target?.user?.app_metadata as { developer?: boolean } | undefined)?.developer === true) {
+  // The developer account can never be deleted - by anyone. Fail CLOSED: if the
+  // lookup errors (transient GoTrue failure / rate-limit), refuse the delete
+  // rather than proceed blind - otherwise the "untouchable" guard opens on any
+  // hiccup and the developer super-account could be removed.
+  const { data: target, error: fetchErr } = await gate.admin.auth.admin.getUserById(body.id);
+  if (fetchErr || !target?.user) {
+    return Response.json({ error: fetchErr?.message ?? "User not found." }, { status: 404 });
+  }
+  if ((target.user.app_metadata as { developer?: boolean } | undefined)?.developer === true) {
     return Response.json({ error: "The developer account cannot be deleted." }, { status: 403 });
   }
 

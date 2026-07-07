@@ -1,4 +1,4 @@
-# BreakAid — Costco Gameplan Generator
+# BreakAid - Costco Gameplan Generator
 
 A Next.js 16 web app that helps Costco managers auto-generate the daily 30-minute interval **Gameplan** for employees stationed at the warehouse Door (entry/exit). Upload the weekly schedule, configure who can do what, and let the engine assign Doors, Walks, Breaks, Security, and Front End coverage in one click.
 
@@ -13,9 +13,9 @@ A Next.js 16 web app that helps Costco managers auto-generate the daily 30-minut
 ## Features
 
 - **Drag-and-drop upload** of the weekly schedule (`.xlsx` / `.csv`)
-- **Capabilities modal** — toggle per-employee certifications (Walks, Security)
-- **Interactive grid** — employees on rows, 30-min slots on columns; click any cell to cycle task assignments
-- **Auto-Generate engine** — assigns `D`, `W`, `B`, `B/D`, `SEC`, `FE` per Costco's staffing rules
+- **Capabilities modal** - toggle per-employee certifications (Walks, Security)
+- **Interactive grid** - employees on rows, 30-min slots on columns; click any cell to cycle task assignments
+- **Auto-Generate engine** - assigns `D`, `W`, `B`, `B/D`, `SEC`, `FE` per Costco's staffing rules
 - **CSV export** matching the official Costco Gameplan template
 
 ## Auto-Generate Rules
@@ -31,7 +31,7 @@ A Next.js 16 web app that helps Costco managers auto-generate the daily 30-minut
 
 There is is also `IN` and `OUT` instead of `D`
 
-> Coverage constraint: a break is never assigned if it would drop Door coverage below 3 people — the engine shifts it to the closest valid slot.
+> Coverage constraint: a break is never assigned if it would drop Door coverage below 3 people - the engine shifts it to the closest valid slot.
 
 ## Getting started
 
@@ -44,10 +44,10 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Scripts
 
-- `npm run dev` — start the dev server
-- `npm run build` — production build
-- `npm run start` — serve the production build
-- `npm run lint` — run ESLint
+- `npm run dev` - start the dev server
+- `npm run build` - production build
+- `npm run start` - serve the production build
+- `npm run lint` - run ESLint
 
 ## Roadmap
 
@@ -56,4 +56,4 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Notes
 
-Sample input spreadsheets and exported gameplans are gitignored — they contain real employee data and must not be committed.
+Sample input spreadsheets and exported gameplans are gitignored - they contain real employee data and must not be committed.

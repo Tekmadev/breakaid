@@ -1,15 +1,16 @@
 /**
- * supabaseServer.ts — Server-side Supabase helpers for Route Handlers.
+ * supabaseServer.ts - Server-side Supabase helpers for Route Handlers.
  *
  * `getServerUser()` reads the caller's session from the request cookies and
  * returns a VERIFIED user (auth.getUser() round-trips to the Auth server), or
- * null. Cookie writes are a no-op here — token refresh is the proxy's job
+ * null. Cookie writes are a no-op here - token refresh is the proxy's job
  * (src/proxy.ts runs on every matched request before any handler).
  *
- * Roles live in the JWT's app_metadata (server-controlled). A missing role is
- * treated as "manager" so the original pre-roles account keeps working until
- * the migration SQL backfills it; every account created through the admin API
- * gets an explicit role.
+ * Roles live in the JWT's app_metadata (server-controlled). Every account
+ * created through the admin API gets an explicit role, and the migration SQL
+ * backfills the original pre-roles account to manager. A missing role is
+ * treated as "viewer" (least privilege), so a stray or self-registered account
+ * can never gain manager access by default.
  */
 
 import { cookies } from "next/headers";
@@ -40,5 +41,5 @@ export async function getServerUser(): Promise<User | null> {
 export function isManager(user: User | null): boolean {
   if (!user) return false;
   const role = (user.app_metadata as { role?: string } | undefined)?.role;
-  return role !== "viewer"; // missing role = manager (bootstrap account)
+  return role === "manager"; // least privilege: only an explicit manager qualifies
 }

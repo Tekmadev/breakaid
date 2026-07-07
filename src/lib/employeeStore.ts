@@ -1,5 +1,5 @@
 /**
- * employeeStore.ts — The async data-access seam for persisted employee profiles.
+ * employeeStore.ts - The async data-access seam for persisted employee profiles.
  *
  * The Employee Management page and the gameplan builder talk ONLY to the
  * `employeeStore` singleton via the {@link EmployeeStore} interface, so the
@@ -7,7 +7,7 @@
  * module load:
  *   - Supabase (`supabaseEmployeeStore`) when NEXT_PUBLIC_SUPABASE_URL +
  *     NEXT_PUBLIC_SUPABASE_ANON_KEY are set (see supabase/schema.sql).
- *   - localStorage (`localEmployeeStore`) otherwise — a zero-config fallback so
+ *   - localStorage (`localEmployeeStore`) otherwise - a zero-config fallback so
  *     the app still works before Supabase is configured.
  *
  * Methods are async (Promise-returning) so callers don't change shape across
@@ -57,6 +57,7 @@ export const localEmployeeStore: EmployeeStore = {
 
 type EmployeeRow = {
   name: string;
+  display_name: string | null;
   position: string | null;
   can_walk: boolean;
   can_sec: boolean;
@@ -65,13 +66,14 @@ type EmployeeRow = {
   updated_at: string | null;
 };
 
-const COLUMNS = "name, position, can_walk, can_sec, door_side, last_shift, updated_at";
+const COLUMNS = "name, display_name, position, can_walk, can_sec, door_side, last_shift, updated_at";
 
 const toDoorSide = (v: string | null): EmployeeRecord["doorSide"] =>
   v === "in" || v === "out" ? v : "both";
 
 const rowToRecord = (r: EmployeeRow): EmployeeRecord => ({
   name: r.name,
+  displayName: r.display_name ?? undefined,
   position: r.position ?? undefined,
   canWalk: r.can_walk,
   canSec: r.can_sec,
@@ -81,12 +83,13 @@ const rowToRecord = (r: EmployeeRow): EmployeeRecord => ({
 });
 
 /**
- * Build a partial DB payload from a patch — only keys actually present in the
+ * Build a partial DB payload from a patch - only keys actually present in the
  * patch are included, so an upsert updates exactly those columns (a key set to
  * `undefined` is sent as null to clear that nullable column).
  */
 function patchToRow(patch: Partial<EmployeeRecord> & { name: string }): Record<string, unknown> {
   const row: Record<string, unknown> = { name: patch.name };
+  if ("displayName" in patch) row.display_name = patch.displayName ?? null;
   if ("position" in patch) row.position = patch.position ?? null;
   if ("canWalk" in patch) row.can_walk = patch.canWalk;
   if ("canSec" in patch) row.can_sec = patch.canSec;

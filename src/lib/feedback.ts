@@ -1,10 +1,10 @@
-// TEMPORARY — feedback capture scaffolding for algorithm training. Safe to delete once deterministic rules are finalized.
+// TEMPORARY - feedback capture scaffolding for algorithm training. Safe to delete once deterministic rules are finalized.
 //
 // This module collects manager corrections to an auto-generated Gameplan into a
 // self-contained JSON artifact. A developer with NO access to the running app
 // can read the exported "breakaid-feedback.json" to understand exactly WHY each
 // cell was changed, and use those labels to design a deterministic scheduling
-// algorithm. There is NO runtime AI here — everything is local + localStorage.
+// algorithm. There is NO runtime AI here - everything is local + localStorage.
 
 import type { Employee, Gameplan } from "./types";
 
@@ -29,7 +29,7 @@ export type CorrectionReason =
 
 /**
  * How broadly the manager intends the correction to apply. Single-select in
- * the UI. Captured as a training signal — the running app does not act on it.
+ * the UI. Captured as a training signal - the running app does not act on it.
  */
 export type CorrectionScope = "once" | "employee" | "similar-shifts" | "everyone";
 
@@ -37,7 +37,7 @@ export type CorrectionScope = "once" | "employee" | "similar-shifts" | "everyone
  * A single labeled correction: one cell change plus the structured rationale.
  *
  * All employee fields are denormalized onto the correction so the exported
- * JSON is self-contained — the developer never has to cross-reference the
+ * JSON is self-contained - the developer never has to cross-reference the
  * roster to understand the employee's constraints at the moment of the change.
  */
 export type Correction = {
@@ -47,7 +47,7 @@ export type Correction = {
   sessionId: string;
   /**
    * Monotonic 0-based ordinal within the session. Corrections MUST be replayed
-   * onto `generatedGameplan` in ascending `sequence` order — `timestamp` alone
+   * onto `generatedGameplan` in ascending `sequence` order - `timestamp` alone
    * is not safe to sort by (millisecond ties). doorCoverageBefore/After are
    * CUMULATIVE: measured against the grid as it stood after all lower-sequence
    * corrections, not against the pristine baseline.
@@ -151,7 +151,7 @@ export function loadSession(): FeedbackSession | null {
     if (!raw) return null;
     return JSON.parse(raw) as FeedbackSession;
   } catch {
-    // Corrupt or unreadable JSON — treat as no session rather than throwing.
+    // Corrupt or unreadable JSON - treat as no session rather than throwing.
     return null;
   }
 }
@@ -177,7 +177,7 @@ export function clearSession(): void {
   try {
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {
-    // Ignore — see saveSession note.
+    // Ignore - see saveSession note.
   }
 }
 

@@ -8,8 +8,8 @@
 
 The BreakAid app has a **Feedback Mode** (a temporary, dashed-border toolbar
 under the Gameplan Grid header). After a manager clicks **Auto Generate** and
-then corrects cells in the grid, the app records each correction — the cell
-change plus a structured reason and a free-text note — into a self-contained
+then corrects cells in the grid, the app records each correction - the cell
+change plus a structured reason and a free-text note - into a self-contained
 JSON file called `breakaid-feedback.json`.
 
 This folder is where you save those exported files.
@@ -34,7 +34,7 @@ A developer with no access to the running app reads `breakaid-feedback.json` to
 understand **why** each cell was changed away from the auto-generated baseline.
 The structured `reasons`, `scope`, denormalized employee constraints, and the
 `doorCoverageBefore` / `doorCoverageAfter` numbers are the labeled signal used
-to design and tune a deterministic scheduling algorithm — so that future
+to design and tune a deterministic scheduling algorithm - so that future
 Auto Generate runs already produce what the manager would have hand-corrected.
 
 See [`SCHEMA.md`](./SCHEMA.md) for the full field-by-field structure and an

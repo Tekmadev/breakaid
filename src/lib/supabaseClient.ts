@@ -1,5 +1,5 @@
 /**
- * supabaseClient.ts — Single shared Supabase BROWSER client (cookie-based).
+ * supabaseClient.ts - Single shared Supabase BROWSER client (cookie-based).
  *
  * Uses `@supabase/ssr`'s `createBrowserClient`, which stores the auth session in
  * cookies (via `document.cookie`) rather than localStorage. That is what lets
@@ -9,10 +9,10 @@
  * The URL + anon (publishable) key come from NEXT_PUBLIC_ env vars, so they are
  * inlined into the bundle. That is expected for Supabase: the anon key ships
  * publicly and real access control is enforced by Row Level Security (which is
- * now scoped to authenticated users — see supabase/schema.sql).
+ * now scoped to authenticated users - see supabase/schema.sql).
  *
- * If the env vars are absent, `supabase` is null and `hasSupabaseEnv` is false —
- * callers fall back to localStorage so the app still works unconfigured.
+ * If the env vars are absent, `supabase` is null and `hasSupabaseEnv` is false,
+ * so callers fall back to localStorage and the app still works unconfigured.
  */
 
 import { createBrowserClient } from "@supabase/ssr";

@@ -14,13 +14,13 @@ import {
 import type { DoorSide, EmployeeRecord } from "@/lib/types";
 import { employeeStore } from "@/lib/employeeStore";
 import { hasSupabaseEnv } from "@/lib/supabaseClient";
-import SignOutButton from "@/components/SignOutButton";
+import AppHeader from "@/components/AppHeader";
 
-/** Format an ISO timestamp as a short, locale date — or "—" when absent. */
+/** Format an ISO timestamp as a short, locale date - or " - " when absent. */
 function formatUpdated(iso?: string): string {
-  if (!iso) return "—";
+  if (!iso) return " - ";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return " - ";
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
@@ -92,6 +92,22 @@ export default function EmployeesPage() {
     [upsertLocal]
   );
 
+  // Display name: edit locally on each keystroke, commit to the store on blur.
+  // Blank clears it, so the gameplan falls back to the roster name.
+  const handleDisplayNameChange = (name: string, value: string) => {
+    setRecords((prev) => prev.map((r) => (r.name === name ? { ...r, displayName: value } : r)));
+  };
+  const commitDisplayName = useCallback(
+    async (rec: EmployeeRecord) => {
+      const saved = await employeeStore.upsert({
+        name: rec.name,
+        displayName: rec.displayName?.trim() || undefined,
+      });
+      upsertLocal(saved);
+    },
+    [upsertLocal]
+  );
+
   const handleRemove = useCallback(async (name: string) => {
     if (!window.confirm(`Remove ${name}? Their saved capabilities will be deleted.`)) return;
     await employeeStore.remove(name);
@@ -130,58 +146,18 @@ export default function EmployeesPage() {
     if (!q) return records;
     return records.filter(
       (r) =>
-        r.name.toLowerCase().includes(q) || (r.position ?? "").toLowerCase().includes(q)
+        r.name.toLowerCase().includes(q) ||
+        (r.displayName ?? "").toLowerCase().includes(q) ||
+        (r.position ?? "").toLowerCase().includes(q)
     );
   }, [records, query]);
 
   return (
     <div className="animate-fade-in" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <header
-        className="header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          borderBottom: "3px solid var(--accent-secondary)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="https://upload.wikimedia.org/wikipedia/commons/5/59/Costco_Wholesale_logo_2010-10-26.svg"
-            alt="Costco Wholesale"
-            style={{ height: "32px" }}
-          />
-          <h1
-            style={{
-              color: "var(--accent-secondary)",
-              borderLeft: "2px solid var(--border-color)",
-              paddingLeft: "1rem",
-              marginLeft: "0.5rem",
-            }}
-          >
-            Employee Management
-          </h1>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <Link
-            href="/"
-            className="btn-primary"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              textDecoration: "none",
-              backgroundColor: "var(--bg-tertiary)",
-              color: "var(--text-primary)",
-            }}
-          >
-            <ArrowLeft size={18} />
-            Back to Gameplan
-          </Link>
-          <SignOutButton />
-        </div>
-      </header>
+      <AppHeader
+        title="Employee Management"
+        actions={[{ kind: "link", label: "Back to Gameplan", href: "/", icon: <ArrowLeft size={18} /> }]}
+      />
 
       <main className="container" style={{ flex: 1, maxWidth: "1100px" }}>
         <div className="glass-panel" style={{ padding: "2rem" }}>
@@ -190,11 +166,12 @@ export default function EmployeesPage() {
             <h2>Employees &amp; Capabilities</h2>
           </div>
           <p style={{ color: "var(--text-secondary)", marginBottom: "1.25rem", fontSize: "0.9rem" }}>
-            Set who can <strong>Walk (W)</strong>, who can do <strong>Security (SEC)</strong>, and any{" "}
-            <strong>door-side restriction</strong> (e.g. entrance-only for medical reasons) once here —
-            the generator reads these every time you build a gameplan, so you never re-set them per
-            upload. People appear here automatically after you open a day in the builder, or add them
-            manually below.
+            Set each person&apos;s <strong>display name</strong> (the friendlier label shown on the
+            gameplan; leave it blank to use their schedule name), who can <strong>Walk (W)</strong>,
+            who can do <strong>Security (SEC)</strong>, and any <strong>door-side restriction</strong>{" "}
+            (e.g. entrance-only for medical reasons) once here. The generator reads these every time you
+            build a gameplan, so you never re-set them per upload. People appear here automatically
+            after you open a day in the builder, or add them manually below.
           </p>
 
           {/* Storage notice */}
@@ -214,7 +191,7 @@ export default function EmployeesPage() {
             <Info size={16} style={{ flexShrink: 0, marginTop: "0.1rem" }} />
             <span>
               {hasSupabaseEnv
-                ? "Synced to the shared database — changes here apply automatically to every future gameplan, on every device."
+                ? "Synced to the shared database - changes here apply automatically to every future gameplan, on every device."
                 : "Saved in this browser only (Supabase is not configured). Set the Supabase env vars to sync across devices."}
             </span>
           </div>
@@ -309,6 +286,7 @@ export default function EmployeesPage() {
                   <thead>
                     <tr style={{ backgroundColor: "var(--bg-tertiary)", borderBottom: "2px solid var(--border-color)" }}>
                       <th style={thStyle}>Name</th>
+                      <th style={thStyle}>Display name</th>
                       <th style={thStyle}>Position</th>
                       <th style={thStyle}>Last shift</th>
                       <th style={{ ...thStyle, textAlign: "center" }}>Can Walk (W)</th>
@@ -324,16 +302,26 @@ export default function EmployeesPage() {
                         <td style={{ ...tdStyle, fontWeight: 600 }}>{rec.name}</td>
                         <td style={tdStyle}>
                           <input
+                            value={rec.displayName ?? ""}
+                            onChange={(e) => handleDisplayNameChange(rec.name, e.target.value)}
+                            onBlur={() => commitDisplayName(rec)}
+                            placeholder={rec.name}
+                            aria-label={`Display name for ${rec.name}`}
+                            style={{ ...inputStyle, padding: "0.35rem 0.5rem", fontSize: "0.8rem", maxWidth: "160px" }}
+                          />
+                        </td>
+                        <td style={tdStyle}>
+                          <input
                             value={rec.position ?? ""}
                             onChange={(e) => handlePositionChange(rec.name, e.target.value)}
                             onBlur={() => commitPosition(rec)}
-                            placeholder="—"
+                            placeholder=" - "
                             aria-label={`Position for ${rec.name}`}
                             style={{ ...inputStyle, padding: "0.35rem 0.5rem", fontSize: "0.8rem", maxWidth: "160px" }}
                           />
                         </td>
                         <td style={{ ...tdStyle, color: "var(--text-secondary)", fontSize: "0.8rem", whiteSpace: "nowrap" }}>
-                          {rec.lastShift ?? "—"}
+                          {rec.lastShift ?? " - "}
                         </td>
                         <td style={{ ...tdStyle, textAlign: "center" }}>
                           <input

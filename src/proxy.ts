@@ -1,5 +1,5 @@
 /**
- * proxy.ts — Next.js 16 request interceptor (formerly "middleware").
+ * proxy.ts - Next.js 16 request interceptor (formerly "middleware").
  *
  * Runs in front of every matched route to enforce login: unauthenticated
  * requests are redirected to /login before any page is served, and the Supabase

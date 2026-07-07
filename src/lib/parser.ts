@@ -1,5 +1,5 @@
 /**
- * parser.ts — Turn a real Costco "Employee Weekly Schedule" .xlsx into per-day
+ * parser.ts - Turn a real Costco "Employee Weekly Schedule" .xlsx into per-day
  * BreakAid rosters. Replaces the old mock employee data.
  *
  * File shape (see project memory "breakaid-schedule-file-format"):
@@ -23,10 +23,16 @@ export type ParsedDay = {
   dateLabel: string;
   /** Three-letter weekday, e.g. "Mon". */
   weekday: string;
-  /** True for Sat/Sun (drives the weekend ruleset — no manual toggle needed). */
+  /** True for Sat/Sun (drives the weekend ruleset - no manual toggle needed). */
   isWeekend: boolean;
   /** The door roster for this day. */
   employees: Employee[];
+  /**
+   * Reserve pool: everyone else scheduled that day who is NOT on the door team.
+   * A manager can pull one of these in as a helper when short-staffed. They are
+   * kept out of the grid and out of Employee Management until explicitly added.
+   */
+  additional: Employee[];
 };
 
 export type ScheduleParseResult = {
@@ -46,7 +52,7 @@ const WEEKDAY_RE = /\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/;
 // 7:00 AM is slot 0; each slot is 30 minutes. (Matches TIME_SLOTS in generator.ts.)
 const GRID_START_MIN = 7 * 60;
 const SLOT_MINUTES = 30;
-const LAST_SLOT_IDX = 34; // "0:00" (midnight) — the grid ends here.
+const LAST_SLOT_IDX = 34; // "0:00" (midnight) - the grid ends here.
 
 /** "HH:MM" → minutes since midnight, or null. */
 function parseHHMM(s: string): number | null {
@@ -109,7 +115,7 @@ function toEmployee(name: string, cell: string): Employee | null {
     name,
     // Compact clock span like the paper form ("840-1710", "1530-0000").
     shift: `${formatClock(span.startMin)}-${formatClock(span.endMin)}`,
-    // Capabilities are NOT in the schedule — they come from the Employee
+    // Capabilities are NOT in the schedule - they come from the Employee
     // Management page. Default sensibly until that exists.
     canWalk: true,
     canSec: false,
@@ -139,7 +145,7 @@ export function parseScheduleRows(rows: string[][]): ScheduleParseResult {
 
   // 2) Day columns: from the first "Employee" header row, any column whose
   //    header names a weekday + date. Assumes columns are consistent across
-  //    sections (they are — every section repeats the same header).
+  //    sections (they are - every section repeats the same header).
   const dayCols: { col: number; label: string; weekday: string; isWeekend: boolean }[] = [];
   for (const r of rows) {
     if (String(r[0]).trim() !== "Employee") continue;
@@ -153,7 +159,7 @@ export function parseScheduleRows(rows: string[][]): ScheduleParseResult {
     if (dayCols.length) break;
   }
   if (dayCols.length === 0) {
-    warnings.push("No day columns found — is this a Costco Weekly Schedule export?");
+    warnings.push("No day columns found - is this a Costco Weekly Schedule export?");
     return { timePeriod, days: [], warnings };
   }
 
@@ -170,33 +176,52 @@ export function parseScheduleRows(rows: string[][]): ScheduleParseResult {
     records.push({ name: c0, section, row: r });
   }
 
-  // 4) Per day, build the door roster (086-Security ∪ MBR SRV tagged elsewhere).
+  // Chronological order: earliest shift START first; when two people start
+  // together, the one who FINISHES earlier comes first; names break the rest.
+  const byShift = (a: Employee, b: Employee) =>
+    a.shiftStartIdx - b.shiftStartIdx ||
+    a.shiftEndIdx - b.shiftEndIdx ||
+    a.name.localeCompare(b.name);
+
+  // 4) Per day, build the door roster (086-Security ∪ MBR SRV tagged elsewhere)
+  //    AND a reserve pool of everyone else scheduled that day, so a manager can
+  //    pull in a helper when short-staffed. The pool is never auto-registered;
+  //    a person becomes "known" only when explicitly added to a plan.
   const days: ParsedDay[] = dayCols.map((d) => {
-    const seen = new Set<string>();
+    const doorSeen = new Set<string>();
     const employees: Employee[] = [];
+    const poolSeen = new Set<string>();
+    const additional: Employee[] = [];
     for (const rec of records) {
       const cell = String(rec.row[d.col] ?? "");
-      const inDoorSection = DOOR_SECTION_RE.test(rec.section);
-      const taggedMbr = cell.includes(MBR_ROLE);
-      if (!inDoorSection && !taggedMbr) continue;
       const emp = toEmployee(rec.name, cell);
       if (!emp) continue; // off / vacation / no parseable shift
-      if (seen.has(emp.name)) continue;
-      seen.add(emp.name);
-      employees.push(emp);
+      const onDoorTeam = DOOR_SECTION_RE.test(rec.section) || cell.includes(MBR_ROLE);
+      if (onDoorTeam) {
+        if (doorSeen.has(emp.name)) continue;
+        doorSeen.add(emp.name);
+        employees.push(emp);
+      } else {
+        if (poolSeen.has(emp.name)) continue;
+        poolSeen.add(emp.name);
+        additional.push(emp);
+      }
     }
+    // A name seen in both a door row and a non-door row belongs to the door
+    // team; drop it from the reserve pool so it is never offered twice.
+    const reserve = additional.filter((e) => !doorSeen.has(e.name));
     if (employees.length === 0) {
       warnings.push(`No door staff found for ${d.label}.`);
     }
-    // Chronological columns: earliest shift START first; when two people start
-    // together, the one who FINISHES earlier comes first; names break the rest.
-    employees.sort(
-      (a, b) =>
-        a.shiftStartIdx - b.shiftStartIdx ||
-        a.shiftEndIdx - b.shiftEndIdx ||
-        a.name.localeCompare(b.name)
-    );
-    return { dateLabel: d.label, weekday: d.weekday, isWeekend: d.isWeekend, employees };
+    employees.sort(byShift);
+    reserve.sort(byShift);
+    return {
+      dateLabel: d.label,
+      weekday: d.weekday,
+      isWeekend: d.isWeekend,
+      employees,
+      additional: reserve,
+    };
   });
 
   return { timePeriod, days, warnings };

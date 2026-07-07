@@ -1,19 +1,20 @@
 "use client";
 
 import React, { useState, useCallback, useEffect } from 'react';
-import Link from 'next/link';
 import * as XLSX from 'xlsx';
-import { Upload, Download, RefreshCw, AlertCircle, Settings, Play, X, FlaskConical, Trash2, Calendar, ChevronRight, Users, Printer, Save, Check, ShieldCheck } from 'lucide-react';
+import { Upload, Download, RefreshCw, AlertCircle, Settings, Play, X, FlaskConical, Trash2, Calendar, ChevronRight, Users, Printer, Save, Check, ShieldCheck, Layers, History, FileSpreadsheet, UserPlus, Search } from 'lucide-react';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- TASK_CYCLE kept for reference; the popover editor below replaces click-to-cycle.
-import { type DoorSide, type Employee, type EmployeeRecord, type Gameplan, type TaskCode, TASK_CYCLE } from '@/lib/types';
+import { type DoorSide, type Employee, type EmployeeRecord, type FinalizedGameplan, type Gameplan, type TaskCode, TASK_CYCLE } from '@/lib/types';
 import { generateGameplan, computeHelpRow, TIME_SLOTS } from '@/lib/generator';
 import { parseScheduleRows, type ScheduleParseResult } from '@/lib/parser';
 import { employeeStore } from '@/lib/employeeStore';
 import { gameplanStore } from '@/lib/gameplanStore';
 import { exportGameplanXlsx } from '@/lib/excelExport';
-import SignOutButton from '@/components/SignOutButton';
+import { isPlanEditable } from '@/lib/planLock';
+import { displayFor } from '@/lib/displayName';
+import AppHeader from '@/components/AppHeader';
 import GameplanPrint from '@/components/GameplanPrint';
-// TEMPORARY — feedback capture scaffolding for algorithm training. Safe to delete once deterministic rules are finalized.
+// TEMPORARY - feedback capture scaffolding for algorithm training. Safe to delete once deterministic rules are finalized.
 import {
   type Correction,
   type CorrectionReason,
@@ -25,11 +26,11 @@ import {
   exportSessionAsFile,
 } from '@/lib/feedback';
 
-// TEMP — task options offered by the floating cell editor (feedback scaffolding).
+// TEMP - task options offered by the floating cell editor (feedback scaffolding).
 // Door duty is picked as a SIDE (IN = entrance, OUT = exit); legacy "D" is not
-// offered — old saved plans still render it, but new edits always take a side.
+// offered - old saved plans still render it, but new edits always take a side.
 const TASK_OPTIONS: { code: TaskCode; label: string }[] = [
-  { code: '', label: '—' },
+  { code: '', label: ' - ' },
   { code: 'IN', label: 'IN (entrance)' },
   { code: 'OUT', label: 'OUT (exit)' },
   { code: 'W', label: 'W' },
@@ -42,10 +43,10 @@ const TASK_OPTIONS: { code: TaskCode; label: string }[] = [
 ];
 
 // The on-screen grid starts at 8:00 (TIME_SLOTS idx 2), matching the paper
-// form. The 7 AM walk exists but is understood — it is not displayed.
+// form. The 7 AM walk exists but is understood - it is not displayed.
 const DISPLAY_START_IDX = 2;
 
-// TEMP — reason chips (multi-select) mapping label → CorrectionReason.
+// TEMP - reason chips (multi-select) mapping label → CorrectionReason.
 const REASON_OPTIONS: { value: CorrectionReason; label: string }[] = [
   { value: 'break-too-late', label: 'Break too late' },
   { value: 'break-too-early', label: 'Break too early' },
@@ -58,7 +59,7 @@ const REASON_OPTIONS: { value: CorrectionReason; label: string }[] = [
   { value: 'other', label: 'Other' },
 ];
 
-// TEMP — scope chips (single-select) mapping label → CorrectionScope.
+// TEMP - scope chips (single-select) mapping label → CorrectionScope.
 const SCOPE_OPTIONS: { value: CorrectionScope; label: string }[] = [
   { value: 'once', label: 'Just this once' },
   { value: 'employee', label: 'Always for this employee' },
@@ -66,7 +67,7 @@ const SCOPE_OPTIONS: { value: CorrectionScope; label: string }[] = [
   { value: 'everyone', label: 'Everyone' },
 ];
 
-// TEMP — describes a cell change awaiting a reason in the feedback modal.
+// TEMP - describes a cell change awaiting a reason in the feedback modal.
 type PendingChange = {
   empName: string;
   time: string;
@@ -84,7 +85,7 @@ const parseTime = (t: string) => {
   return parseInt(parts[0]) * 60 + (parts[1] ? parseInt(parts[1]) : 0);
 };
 
-// TEMP — deep clone of a Gameplan for the feedback baseline (one level of
+// TEMP - deep clone of a Gameplan for the feedback baseline (one level of
 // inner records). Mirrors the generator's own immutability approach.
 const cloneMatrix = (matrix: Gameplan): Gameplan => {
   const clone: Gameplan = {};
@@ -92,7 +93,7 @@ const cloneMatrix = (matrix: Gameplan): Gameplan => {
   return clone;
 };
 
-// TEMP — door-equivalent coverage (IN + OUT + legacy D + B/D) at a time, given
+// TEMP - door-equivalent coverage (IN + OUT + legacy D + B/D) at a time, given
 // a roster + matrix. Used to record doorCoverageBefore/After on each correction.
 const countDoorCoverageAt = (
   matrix: Gameplan,
@@ -107,6 +108,40 @@ const countDoorCoverageAt = (
   return count;
 };
 
+// Overlay saved capabilities + door-side onto a freshly parsed roster, so the
+// generator honours each person's persisted settings. Names with no saved
+// record keep the parser defaults (canWalk=true / canSec=false / doorSide=both).
+const overlayCaps = (
+  roster: Employee[],
+  saved: Record<string, EmployeeRecord>
+): Employee[] =>
+  roster.map((e) =>
+    saved[e.name]
+      ? {
+          ...e,
+          displayName: saved[e.name].displayName,
+          canWalk: saved[e.name].canWalk,
+          canSec: saved[e.name].canSec,
+          doorSide: saved[e.name].doorSide,
+        }
+      : e
+  );
+
+// Chronological roster order, matching the parser: earliest start first, then
+// earliest finish, then name. Used when inserting an added helper into the grid.
+const rosterSort = (a: Employee, b: Employee) =>
+  a.shiftStartIdx - b.shiftStartIdx ||
+  a.shiftEndIdx - b.shiftEndIdx ||
+  a.name.localeCompare(b.name);
+
+/** "2026-07-07T…Z" → short local "Jul 7, 3:41 PM", or " - ". */
+const fmtFinalized = (iso?: string): string => {
+  if (!iso) return ' - ';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return ' - ';
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -117,7 +152,7 @@ export default function Home() {
   const [scheduleMatrix, setScheduleMatrix] = useState<Gameplan>({});
   const [isGenerated, setIsGenerated] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  // Weekday vs weekend ruleset — set from the selected day's date (no toggle).
+  // Weekday vs weekend ruleset - set from the selected day's date (no toggle).
   const [isWeekend, setIsWeekend] = useState(false);
 
   // The parsed workbook (may hold multiple days) and which day is open.
@@ -127,7 +162,23 @@ export default function Home() {
   // Finalize & save state for the printable gameplan.
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  // ── TEMP FEEDBACK STATE — remove with feedback scaffolding ──────────────
+  // Finalized-gameplan history (the dashboard list) + bulk "generate all days".
+  const [history, setHistory] = useState<FinalizedGameplan[]>([]);
+  const [bulkState, setBulkState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+  const [bulkDone, setBulkDone] = useState(0);
+  const [bulkSkipped, setBulkSkipped] = useState(0);
+  // A saved plan queued for reprint/re-export from the history list (rendered
+  // into the hidden print form so it can be printed without reopening it).
+  const [savedForPrint, setSavedForPrint] = useState<FinalizedGameplan | null>(null);
+
+  // "Add a helper" picker: pull a reserve-pool employee onto the day's roster.
+  const [showAddHelper, setShowAddHelper] = useState(false);
+  const [helperSearch, setHelperSearch] = useState('');
+  // True once the roster changes (helper added/removed) after a plan was built,
+  // so we can prompt the manager to Auto Generate and rebuild with the new team.
+  const [rosterDirty, setRosterDirty] = useState(false);
+
+  // ── TEMP FEEDBACK STATE - remove with feedback scaffolding ──────────────
   // Floating cell editor: which active cell is open + its on-screen rect.
   const [editingCell, setEditingCell] = useState<
     { empName: string; time: string; slotIdx: number; rect: DOMRect } | null
@@ -147,7 +198,7 @@ export default function Home() {
 
   // Close the floating cell editor on Escape, scroll, or resize. The popover is
   // anchored to a rect captured at click time, so on scroll (the grid scrolls
-  // independently — capture:true catches that inner scroll) we close it rather
+  // independently - capture:true catches that inner scroll) we close it rather
   // than let it detach and float over an unrelated cell.
   useEffect(() => {
     if (!editingCell) return;
@@ -182,6 +233,15 @@ export default function Home() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [pendingChange]);
+
+  // Load the finalized-gameplan history (dashboard list) on mount and after any
+  // save. setHistory only fires inside the resolved promise, never synchronously.
+  const refreshHistory = useCallback(() => {
+    gameplanStore.list().then(setHistory).catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshHistory();
+  }, [refreshHistory]);
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -236,9 +296,38 @@ export default function Home() {
     if (!parsed) return;
     const day = parsed.days[idx];
     setSelectedDayIdx(idx);
+    setIsWeekend(day.isWeekend);
+    setEditingCell(null);
+    setPendingChange(null);
+    setSaveState('idle');
+    setRosterDirty(false);
+    setShowAddHelper(false);
+    setHelperSearch('');
+
+    // A past day is LOCKED: read-only, print/export only. Load its finalized
+    // version (if one was saved) so it can still be reprinted/exported from
+    // here; never overlay capabilities or register names for a locked day.
+    if (!isPlanEditable(day.dateLabel)) {
+      const saved = history.find((h) => h.date === day.dateLabel);
+      if (saved) {
+        setEmployees(saved.roster);
+        setScheduleMatrix(saved.plan);
+        setIsGenerated(true);
+      } else {
+        setEmployees(day.employees);
+        const blank: Gameplan = {};
+        day.employees.forEach((emp) => {
+          blank[emp.name] = {};
+          TIME_SLOTS.forEach((time) => { blank[emp.name][time] = ""; });
+        });
+        setScheduleMatrix(blank);
+        setIsGenerated(false);
+      }
+      return;
+    }
+
     // Show the parsed roster immediately (canWalk=true / canSec=false defaults).
     setEmployees(day.employees);
-    setIsWeekend(day.isWeekend);
     setIsGenerated(false);
     const initialMatrix: Gameplan = {};
     day.employees.forEach((emp) => {
@@ -246,14 +335,11 @@ export default function Home() {
       TIME_SLOTS.forEach((time) => { initialMatrix[emp.name][time] = ""; });
     });
     setScheduleMatrix(initialMatrix);
-    setEditingCell(null);
-    setPendingChange(null);
-    setSaveState('idle');
 
     // Then overlay saved capabilities from the store (Supabase when configured,
     // else localStorage) so the manager doesn't re-set canWalk/canSec each
     // upload, and register any unseen names so they appear on the Employee
-    // Management page (defaults only — existing saved capabilities are never
+    // Management page (defaults only - existing saved capabilities are never
     // clobbered, since unseen = those with no stored record).
     employeeStore
       .list()
@@ -265,6 +351,7 @@ export default function Home() {
             saved[e.name]
               ? {
                   ...e,
+                  displayName: saved[e.name].displayName,
                   canWalk: saved[e.name].canWalk,
                   canSec: saved[e.name].canSec,
                   doorSide: saved[e.name].doorSide,
@@ -296,6 +383,7 @@ export default function Home() {
     setEmployees([]);
     setScheduleMatrix({});
     setIsGenerated(false);
+    setRosterDirty(false);
   };
 
   // Full reset to the upload screen.
@@ -313,14 +401,14 @@ export default function Home() {
     const emp = employees[idx];
     if (!emp) return;
     const nextVal = !emp[field];
-    // Optimistic UI update — never mutate the existing employee in place.
+    // Optimistic UI update - never mutate the existing employee in place.
     setEmployees((prev) => prev.map((e, i) => (i === idx ? { ...e, [field]: nextVal } : e)));
     // Persist (non-clobbering single-field upsert) so it sticks for future
     // uploads of the same person, and stays in sync with the Employee page.
     employeeStore.upsert({ name: emp.name, [field]: nextVal }).catch(() => {});
   };
 
-  // Door-side restriction (Both / Entrance only / Exit only) — same optimistic
+  // Door-side restriction (Both / Entrance only / Exit only) - same optimistic
   // + persisted pattern; the generator honours it on the next Auto Generate.
   const setDoorSide = (idx: number, side: DoorSide) => {
     const emp = employees[idx];
@@ -329,16 +417,32 @@ export default function Home() {
     employeeStore.upsert({ name: emp.name, doorSide: side }).catch(() => {});
   };
 
-  const handleAutoGenerate = () => {
-    // Delegate all scheduling logic to the pure generator function.
-    // The generator enforces the Costco business rules internally, branching
-    // on the weekday/weekend ruleset selected above.
-    const newMatrix = generateGameplan(employees, isWeekend);
+  // Display name (friendlier label on the plan). Edit locally on each keystroke,
+  // persist on blur. It does NOT require a regenerate: cells are keyed by the
+  // real name, so only the header label changes.
+  const setEmpDisplayName = (idx: number, value: string) => {
+    setEmployees((prev) => prev.map((e, i) => (i === idx ? { ...e, displayName: value } : e)));
+  };
+  const commitEmpDisplayName = (idx: number) => {
+    const emp = employees[idx];
+    if (!emp) return;
+    employeeStore.upsert({ name: emp.name, displayName: emp.displayName?.trim() || undefined }).catch(() => {});
+  };
+
+  // Generate (or rebuild) the plan for a given roster and reset the feedback
+  // baseline. Shared by Auto Generate and by adding/removing a helper, so the
+  // rebuild always runs against the exact roster passed in (no stale state).
+  const runGenerate = (roster: Employee[]) => {
+    // Delegate all scheduling logic to the pure generator function, which
+    // enforces the Costco business rules internally and branches on weekday/
+    // weekend.
+    const newMatrix = generateGameplan(roster, isWeekend);
     setScheduleMatrix(newMatrix);
     setIsGenerated(true);
     setSaveState('idle'); // a fresh plan is unsaved until finalized
+    setRosterDirty(false); // the plan now matches the current roster
 
-    // ── TEMP — (re)write the feedback baseline on every generation ─────────
+    // ── TEMP - (re)write the feedback baseline on every generation ─────────
     // Corrections are always measured against the plan that is on screen, so a
     // fresh generation resets the session entirely.
     const session: FeedbackSession = {
@@ -353,7 +457,7 @@ export default function Home() {
       },
       // Deep snapshot so later capability toggles can't retroactively change
       // what this baseline was generated under.
-      roster: employees.map((e) => ({ ...e })),
+      roster: roster.map((e) => ({ ...e })),
       generatedGameplan: cloneMatrix(newMatrix),
       corrections: [],
     };
@@ -362,6 +466,51 @@ export default function Home() {
     // Make sure no stale editor/modal is left open across a regeneration.
     setEditingCell(null);
     setPendingChange(null);
+  };
+
+  const handleAutoGenerate = () => {
+    // Locked past day: never regenerate (read-only, print/export only).
+    if (selectedDayIdx === null || !parsed) return;
+    if (!isPlanEditable(parsed.days[selectedDayIdx].dateLabel)) return;
+    runGenerate(employees);
+  };
+
+  // Pull a scheduled non-door employee onto this day's roster as a helper (for a
+  // short-staffed door). Their saved capabilities are applied if we have them;
+  // a brand-new helper is registered so they appear in Employee Management going
+  // forward. The manager then clicks Auto Generate to rebuild with the new team.
+  const handleAddHelper = async (helper: Employee) => {
+    if (!dayEditable) return;
+    if (employees.some((e) => e.name === helper.name)) return;
+    let h = helper;
+    try {
+      const rows = await employeeStore.list();
+      const rec = rows.find((r) => r.name === helper.name);
+      if (rec) {
+        h = { ...helper, displayName: rec.displayName, canWalk: rec.canWalk, canSec: rec.canSec, doorSide: rec.doorSide };
+      } else {
+        await employeeStore.upsert({
+          name: helper.name,
+          canWalk: helper.canWalk,
+          canSec: helper.canSec,
+          doorSide: helper.doorSide ?? 'both',
+          lastShift: helper.shift,
+        });
+      }
+    } catch {
+      // Capability lookup / registration is best-effort; still add the helper.
+    }
+    setEmployees((prev) => (prev.some((e) => e.name === h.name) ? prev : [...prev, h].sort(rosterSort)));
+    if (isGenerated) setRosterDirty(true);
+    setHelperSearch('');
+  };
+
+  // Remove a helper that was added to this day. Never touches the core door team
+  // (the picker only offers removal for added helpers).
+  const handleRemoveHelper = (name: string) => {
+    if (!dayEditable) return;
+    setEmployees((prev) => prev.filter((e) => e.name !== name));
+    if (isGenerated) setRosterDirty(true);
   };
 
   // Download the day as a print-ready .xlsx styled exactly like the paper
@@ -380,7 +529,7 @@ export default function Home() {
       );
     } catch (err) {
       console.error(err);
-      alert("Excel export failed — see the console for details.");
+      alert("Excel export failed - see the console for details.");
     }
   };
 
@@ -388,6 +537,8 @@ export default function Home() {
   // it's saved as the day's official version and reprintable later.
   const handleFinalizeSave = async () => {
     if (!isGenerated || selectedDayIdx === null || !parsed) return;
+    // A past day is locked: it can be reprinted/exported but never re-finalized.
+    if (!isPlanEditable(parsed.days[selectedDayIdx].dateLabel)) return;
     setSaveState('saving');
     try {
       await gameplanStore.save({
@@ -397,17 +548,92 @@ export default function Home() {
         plan: cloneMatrix(scheduleMatrix),
       });
       setSaveState('saved');
+      refreshHistory();
     } catch (err) {
       console.error(err);
       setSaveState('error');
     }
   };
 
+  // Generate AND finalize EVERY day in the uploaded file in one pass, applying
+  // each person's saved capabilities/door-side. Managers get the whole week's
+  // gameplans saved (and reprintable from the history dashboard) without opening
+  // each day. Unseen names are registered so they appear on the Employees page.
+  const handleGenerateAllDays = async () => {
+    if (!parsed) return;
+    setBulkState('running');
+    setBulkDone(0);
+    setBulkSkipped(0);
+    try {
+      const rows = await employeeStore.list();
+      const saved: Record<string, EmployeeRecord> = {};
+      for (const r of rows) saved[r.name] = r;
+
+      const known = new Set(rows.map((r) => r.name));
+      const unseen = new Map<string, Employee>();
+      for (const day of parsed.days) {
+        for (const e of day.employees) if (!known.has(e.name)) unseen.set(e.name, e);
+      }
+      if (unseen.size) {
+        await Promise.all(
+          [...unseen.values()].map((e) =>
+            employeeStore.upsert({
+              name: e.name,
+              canWalk: e.canWalk,
+              canSec: e.canSec,
+              doorSide: e.doorSide ?? 'both',
+              lastShift: e.shift,
+            })
+          )
+        ).catch(() => {});
+      }
+
+      let done = 0;
+      let skipped = 0;
+      for (const day of parsed.days) {
+        // Skip past days: they are locked and must not be (re)finalized.
+        if (!isPlanEditable(day.dateLabel)) {
+          skipped++;
+          continue;
+        }
+        const roster = overlayCaps(day.employees, saved);
+        const plan = generateGameplan(roster, day.isWeekend);
+        await gameplanStore.save({
+          date: day.dateLabel,
+          isWeekend: day.isWeekend,
+          roster: roster.map((e) => ({ ...e })),
+          plan,
+        });
+        done++;
+        setBulkDone(done);
+      }
+      setBulkSkipped(skipped);
+      setBulkState('done');
+      refreshHistory();
+    } catch (err) {
+      console.error(err);
+      setBulkState('error');
+    }
+  };
+
+  // Reprint / re-export a saved plan straight from the history list.
+  const handlePrintSaved = (fp: FinalizedGameplan) => {
+    setSavedForPrint(fp);
+    // Let React paint the hidden print form before opening the dialog.
+    window.setTimeout(() => window.print(), 60);
+  };
+  const handleExcelSaved = (fp: FinalizedGameplan) => {
+    exportGameplanXlsx(fp.date, fp.roster, fp.plan).catch((e) => {
+      console.error(e);
+      alert('Excel export failed - see the console.');
+    });
+  };
+
   // Open the browser print dialog. The print CSS swaps the screen for the A4
   // "Member Service Gameplan" form (#gameplan-print); "Save as PDF" yields a file.
   const handlePrint = () => window.print();
 
-  // ── TEMP — floating cell editor + feedback capture ──────────────────────
+  // ── TEMP - floating cell editor + feedback capture ──────────────────────
   // Open the popover for an active cell, anchored to its on-screen rect.
   // Only meaningful once a baseline exists (after Auto Generate), so corrections
   // are always recorded against a real generated plan.
@@ -430,7 +656,7 @@ export default function Home() {
     const oldTask = (scheduleMatrix[empName]?.[time] || '') as TaskCode;
     setEditingCell(null);
 
-    if (newTask === oldTask) return; // No-op selection — nothing to record.
+    if (newTask === oldTask) return; // No-op selection - nothing to record.
 
     // Coverage BEFORE applying the change, measured on the current matrix.
     const doorCoverageBefore = countDoorCoverageAt(scheduleMatrix, employees, time);
@@ -515,7 +741,7 @@ export default function Home() {
   const handleSkipFeedback = () => recordCorrection(false);
 
   // Cancel (X / Escape / backdrop): REVERT the cell to its prior value and
-  // record nothing — a true undo for accidental edits.
+  // record nothing - a true undo for accidental edits.
   const handleCancelEdit = () => {
     if (!pendingChange) return;
     const { empName, time, oldTask } = pendingChange;
@@ -548,7 +774,7 @@ export default function Home() {
       case 'SEC': return 'var(--task-sec-bg)';
       case 'B/D': return 'var(--task-d-bg)';
       case 'PUSH': return 'var(--task-push-bg)';
-      // TEMP — "FE HELP" uses the danger token (red in both themes) so a short-handed door stands out.
+      // TEMP - "FE HELP" uses the danger token (red in both themes) so a short-handed door stands out.
       case 'FE HELP': return 'var(--alert-danger)';
       default: return 'var(--task-none-bg)';
     }
@@ -565,7 +791,7 @@ export default function Home() {
       case 'SEC': return 'var(--task-sec-text)';
       case 'B/D': return 'var(--task-d-text)';
       case 'PUSH': return 'var(--task-push-text)';
-      // TEMP — white on red for the "FE HELP" alert.
+      // TEMP - white on red for the "FE HELP" alert.
       case 'FE HELP': return '#ffffff';
       default: return 'var(--text-primary)';
     }
@@ -575,53 +801,70 @@ export default function Home() {
   // from the current grid (so manual edits update it live).
   const helpRow = isGenerated ? computeHelpRow(scheduleMatrix, employees, isWeekend) : {};
 
+  // Whether the open day may still be edited/finalized (today or a future day).
+  // A past day is locked: read-only, print and Excel export only.
+  const dayEditable =
+    parsed && selectedDayIdx !== null ? isPlanEditable(parsed.days[selectedDayIdx].dateLabel) : true;
+  // How many days in the uploaded file are still editable (for the bulk button).
+  const editableDaysCount = parsed ? parsed.days.filter((d) => isPlanEditable(d.dateLabel)).length : 0;
+
+  // Dashboard history panel - the list of finalized gameplans with reprint /
+  // re-export actions. Rendered on the landing (no-file) screen.
+  const historyBtnStyle: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: '32px', height: '32px', border: '1px solid var(--border-color)',
+    borderRadius: 'var(--radius-sm)', background: 'var(--bg-secondary)',
+    color: 'var(--text-secondary)', cursor: 'pointer',
+  };
+  const historyPanel = history.length > 0 ? (
+    <div className="glass-panel animate-fade-in" style={{ padding: '1.5rem', maxWidth: '600px', margin: '1.5rem auto 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+        <History size={18} color="var(--accent-secondary)" />
+        <h3 style={{ fontSize: '1rem' }}>Finalized gameplans</h3>
+      </div>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '1rem' }}>
+        Saved day plans - reprint or export any of them without re-uploading.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '360px', overflowY: 'auto' }}>
+        {history.map((fp) => (
+          <div key={fp.date} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '0.6rem 0.85rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-tertiary)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', minWidth: 0, textAlign: 'left' }}>
+              <span style={{ fontWeight: 600 }}>{fp.date}</span>
+              <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                finalized {fmtFinalized(fp.finalizedAt)}{fp.updatedByEmail ? ` · ${fp.updatedByEmail}` : ''}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+              <span style={{ fontSize: '0.64rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: '999px', backgroundColor: fp.isWeekend ? 'var(--accent-primary)' : 'var(--accent-secondary)', color: '#fff' }}>
+                {fp.isWeekend ? 'WEEKEND' : 'WEEKDAY'}
+              </span>
+              <button onClick={() => handlePrintSaved(fp)} title={`Print / PDF - ${fp.date}`} aria-label={`Print ${fp.date}`} style={historyBtnStyle}>
+                <Printer size={15} />
+              </button>
+              <button onClick={() => handleExcelSaved(fp)} title={`Export Excel - ${fp.date}`} aria-label={`Export ${fp.date}`} style={historyBtnStyle}>
+                <FileSpreadsheet size={15} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <>
     <div className="animate-fade-in app-screen" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '3px solid var(--accent-secondary)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <img
-            src="https://upload.wikimedia.org/wikipedia/commons/5/59/Costco_Wholesale_logo_2010-10-26.svg"
-            alt="Costco Wholesale"
-            style={{ height: '32px' }}
-          />
-          <h1 style={{ color: 'var(--accent-secondary)', borderLeft: '2px solid var(--border-color)', paddingLeft: '1rem', marginLeft: '0.5rem' }}>
-            BreakAid Gameplan
-          </h1>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <Link
-            href="/employees"
-            className="btn-primary"
-            style={{
-              display: 'flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none',
-              backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)',
-            }}
-          >
-            <Users size={18} />
-            Manage Employees
-          </Link>
-          <Link
-            href="/users"
-            className="btn-primary"
-            style={{
-              display: 'flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none',
-              backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)',
-            }}
-          >
-            <ShieldCheck size={18} />
-            Accounts
-          </Link>
-          <button onClick={handleExport} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Download size={18} />
-            Export Excel
-          </button>
-          <SignOutButton />
-        </div>
-      </header>
+      <AppHeader
+        actions={[
+          { kind: 'link', label: 'Manage Employees', href: '/employees', icon: <Users size={18} /> },
+          { kind: 'link', label: 'Accounts', href: '/users', icon: <ShieldCheck size={18} /> },
+          { kind: 'button', label: 'Export Excel', onClick: handleExport, icon: <Download size={18} />, primary: true },
+        ]}
+      />
 
       <main className="container" style={{ flex: 1, maxWidth: '1400px' }}>
         {!parsed ? (
+          <>
           <div className="glass-panel" style={{
             padding: '4rem 2rem',
             textAlign: 'center',
@@ -630,7 +873,7 @@ export default function Home() {
             alignItems: 'center',
             gap: '1.5rem',
             maxWidth: '600px',
-            margin: '4rem auto'
+            margin: '3rem auto 0'
           }}>
             <div style={{
               width: '80px',
@@ -676,16 +919,59 @@ export default function Home() {
               ) : 'Select File'}
             </label>
           </div>
+          {historyPanel}
+          </>
         ) : selectedDayIdx === null ? (
-          <div className="glass-panel animate-fade-in" style={{ padding: '2rem', maxWidth: '720px', margin: '2rem auto' }}>
+          <>
+          <div className="glass-panel animate-fade-in" style={{ padding: '2rem', maxWidth: '720px', margin: '2rem auto 0' }}>
             <div style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Calendar size={20} color="var(--accent-secondary)" />
               <h2>Pick a day</h2>
             </div>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-              {file ? `${file.name} — ` : ''}
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.25rem', fontSize: '0.9rem' }}>
+              {file ? `${file.name} - ` : ''}
               {parsed.timePeriod ? `period ${parsed.timePeriod}. ` : ''}
-              Select a day to build its gameplan.
+              Generate the whole week at once, or open a single day to review it.
+            </p>
+
+            {/* Generate & finalize every day in one pass. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+              <button
+                onClick={handleGenerateAllDays}
+                disabled={bulkState === 'running' || editableDaysCount === 0}
+                className="btn-primary"
+                title={editableDaysCount === 0 ? 'Every day in this file has already passed and is locked' : undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.5rem',
+                  backgroundColor: 'var(--accent-secondary)',
+                  opacity: bulkState === 'running' || editableDaysCount === 0 ? 0.7 : 1,
+                  cursor: bulkState === 'running' || editableDaysCount === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {bulkState === 'running' ? <RefreshCw className="animate-spin" size={18} /> : <Layers size={18} />}
+                {bulkState === 'running'
+                  ? `Generating ${bulkDone}/${editableDaysCount}…`
+                  : editableDaysCount === parsed.days.length
+                    ? `Generate & Save all ${parsed.days.length} days`
+                    : `Generate & Save ${editableDaysCount} open day${editableDaysCount === 1 ? '' : 's'}`}
+              </button>
+              {bulkState === 'done' && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: 'var(--task-b-text)', fontSize: '0.85rem', fontWeight: 600 }}>
+                  <Check size={16} /> Saved {bulkDone} day{bulkDone === 1 ? '' : 's'}{bulkSkipped > 0 ? `, skipped ${bulkSkipped} past day${bulkSkipped === 1 ? '' : 's'}` : ''}. Find them below and on the dashboard.
+                </span>
+              )}
+              {bulkState === 'error' && (
+                <span style={{ color: 'var(--alert-text)', fontSize: '0.85rem' }}>Something failed - try again.</span>
+              )}
+              {editableDaysCount === 0 && bulkState !== 'running' && (
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  All days in this file have already passed. Reprint any saved plan from the dashboard below.
+                </span>
+              )}
+            </div>
+
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginBottom: '0.75rem' }}>
+              …or open a single day to review and adjust it:
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {parsed.days.map((day, idx) => (
@@ -707,6 +993,15 @@ export default function Home() {
                     </span>
                   </span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    {!isPlanEditable(day.dateLabel) && (
+                      <span style={{
+                        fontSize: '0.72rem', fontWeight: 700, padding: '0.2rem 0.6rem',
+                        borderRadius: '999px', backgroundColor: 'var(--bg-secondary)',
+                        color: 'var(--text-muted)', border: '1px solid var(--border-color)',
+                      }}>
+                        LOCKED
+                      </span>
+                    )}
                     <span style={{
                       fontSize: '0.72rem', fontWeight: 700, padding: '0.2rem 0.6rem',
                       borderRadius: '999px',
@@ -731,6 +1026,8 @@ export default function Home() {
               Upload a different file
             </button>
           </div>
+          {historyPanel}
+          </>
         ) : (
           <div className="glass-panel animate-fade-in" style={{ padding: '2rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
@@ -738,6 +1035,9 @@ export default function Home() {
                 <h2>Gameplan Grid</h2>
                 <p style={{ color: 'var(--text-secondary)' }}>
                   {parsed.days[selectedDayIdx].dateLabel} · {isWeekend ? 'Weekend' : 'Weekday'} · {employees.length} door staff
+                  {!dayEditable && (
+                    <span style={{ marginLeft: '0.5rem', fontWeight: 700, color: 'var(--text-muted)' }}>· Locked (past day)</span>
+                  )}
                 </p>
               </div>
 
@@ -756,8 +1056,14 @@ export default function Home() {
                 </button>
                 <button
                   onClick={handleAutoGenerate}
+                  disabled={!dayEditable}
                   className="btn-primary"
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                  title={dayEditable ? 'Generate the gameplan from the schedule rules' : 'This day has passed and is locked'}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                    opacity: dayEditable ? 1 : 0.5,
+                    cursor: dayEditable ? 'pointer' : 'not-allowed',
+                  }}
                 >
                   <Play size={18} />
                   Auto Generate
@@ -770,16 +1076,33 @@ export default function Home() {
                   <Settings size={18} />
                   Capabilities
                 </button>
+                {dayEditable && (
+                  <button
+                    onClick={() => setShowAddHelper(true)}
+                    className="btn-primary"
+                    title="Add someone else scheduled today to help at the door"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                  >
+                    <UserPlus size={18} />
+                    Add helper
+                  </button>
+                )}
                 <button
                   onClick={handleFinalizeSave}
-                  disabled={!isGenerated || saveState === 'saving'}
+                  disabled={!isGenerated || !dayEditable || saveState === 'saving'}
                   className="btn-primary"
-                  title={!isGenerated ? 'Generate a plan first' : 'Save this day as the finalized version'}
+                  title={
+                    !dayEditable
+                      ? 'This day has passed and can no longer be finalized'
+                      : !isGenerated
+                        ? 'Generate a plan first'
+                        : 'Save this day as the finalized version'
+                  }
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.5rem',
                     backgroundColor: saveState === 'saved' ? 'var(--task-b-text)' : 'var(--accent-secondary)',
-                    opacity: !isGenerated ? 0.5 : 1,
-                    cursor: !isGenerated || saveState === 'saving' ? 'not-allowed' : 'pointer',
+                    opacity: !isGenerated || !dayEditable ? 0.5 : 1,
+                    cursor: !isGenerated || !dayEditable || saveState === 'saving' ? 'not-allowed' : 'pointer',
                   }}
                 >
                   {saveState === 'saving' ? <RefreshCw className="animate-spin" size={18} /> : saveState === 'saved' ? <Check size={18} /> : <Save size={18} />}
@@ -815,7 +1138,9 @@ export default function Home() {
               </div>
             </div>
 
-            {/* TEMP FEEDBACK TOOLBAR — remove when algorithm is finalized */}
+            {/* TEMP FEEDBACK TOOLBAR - remove when algorithm is finalized. Hidden
+                on a locked past day, which cannot be edited or corrected. */}
+            {dayEditable && (
             <div
               style={{
                 display: 'flex',
@@ -872,9 +1197,31 @@ export default function Home() {
                 </button>
               </div>
               <span style={{ flexBasis: '100%', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                Generate a plan, then click any cell to correct it and tell me why — Export when done.
+                Generate a plan, then click any cell to correct it and tell me why - Export when done.
               </span>
             </div>
+            )}
+
+            {dayEditable && rosterDirty && (
+              <div style={{
+                marginBottom: '1rem', padding: '0.75rem 1rem',
+                backgroundColor: 'var(--task-w-bg)', color: 'var(--task-w-text)',
+                borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center',
+                gap: '0.6rem', flexWrap: 'wrap',
+              }}>
+                <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: '0.85rem' }}>
+                  The roster changed. Rebuild the plan so it includes the updated team.
+                </span>
+                <button
+                  onClick={handleAutoGenerate}
+                  className="btn-primary"
+                  style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.85rem' }}
+                >
+                  <Play size={16} /> Auto Generate now
+                </button>
+              </div>
+            )}
 
             <div style={{ overflowX: 'auto', maxHeight: '70vh', overflowY: 'auto', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center' }}>
@@ -883,7 +1230,7 @@ export default function Home() {
                     <th style={{ padding: '0.75rem 1rem', textAlign: 'left', position: 'sticky', left: 0, top: 0, backgroundColor: 'var(--bg-tertiary)', zIndex: 20, borderRight: '2px solid var(--border-color)', minWidth: '80px' }}>Time</th>
                     {employees.map((emp, idx) => (
                       <th key={idx} style={{ padding: '0.75rem 0.5rem', position: 'sticky', top: 0, backgroundColor: 'var(--bg-tertiary)', zIndex: 10, borderRight: '1px solid var(--border-color)', minWidth: '70px' }}>
-                        <div style={{ fontWeight: 600 }}>{emp.name}</div>
+                        <div style={{ fontWeight: 600 }}>{displayFor(emp)}</div>
                         <div style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-secondary)' }}>{emp.shift}</div>
                       </th>
                     ))}
@@ -897,7 +1244,7 @@ export default function Home() {
                 </thead>
                 <tbody>
                   {TIME_SLOTS.map((time, tIdx) => {
-                    // The grid starts at 8:00 like the paper form — pre-8:00
+                    // The grid starts at 8:00 like the paper form - pre-8:00
                     // work (the 7 AM walk) is generated but not displayed.
                     if (tIdx < DISPLAY_START_IDX) return null;
                     let coverage = 0;
@@ -913,9 +1260,10 @@ export default function Home() {
                         {employees.map((emp, empIdx) => {
                           const cellTask = scheduleMatrix[emp.name]?.[time] || "";
                           const isActive = tIdx >= emp.shiftStartIdx && tIdx < emp.shiftEndIdx;
-                          // Editable only after a baseline exists, so every edit
-                          // is a correction against a real generated plan.
-                          const editable = isActive && isGenerated;
+                          // Editable only after a baseline exists (so every edit
+                          // is a correction against a real generated plan) and
+                          // only while the day itself is unlocked (not a past day).
+                          const editable = isActive && isGenerated && dayEditable;
                           return (
                             <td
                               key={`${empIdx}-${time}`}
@@ -948,7 +1296,7 @@ export default function Home() {
                           color: helpRow[time] ? '#ffffff' : 'var(--text-muted)',
                           whiteSpace: 'nowrap',
                         }}>
-                          {helpRow[time] ? 'FE HELP' : '—'}
+                          {helpRow[time] ? 'FE HELP' : ' - '}
                         </td>
                       </tr>
                     );
@@ -957,7 +1305,18 @@ export default function Home() {
               </table>
             </div>
 
-            {!isGenerated && (
+            {!dayEditable && (
+              <div style={{ marginTop: '2rem', padding: '1rem', backgroundColor: 'var(--task-d-bg)', color: 'var(--task-d-text)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                <p style={{ fontSize: '0.875rem' }}>
+                  <strong>This day has passed and is locked.</strong> It can be printed or exported to Excel, but it can no longer be edited or finalized.{' '}
+                  {isGenerated
+                    ? 'You are viewing its finalized version.'
+                    : 'No finalized version was saved for this day.'}
+                </p>
+              </div>
+            )}
+
+            {dayEditable && !isGenerated && (
               <div style={{ marginTop: '2rem', padding: '1rem', backgroundColor: 'var(--task-w-bg)', color: 'var(--task-w-text)', borderRadius: 'var(--radius-md)' }}>
                 <p style={{ fontSize: '0.875rem' }}>
                   <strong>Tip:</strong> Click <strong>Auto Generate</strong> to populate the Gameplan from the schedule rules. After generating, click any cell to adjust it and record why.
@@ -968,7 +1327,7 @@ export default function Home() {
         )}
       </main>
 
-      {/* TEMP — floating cell editor popover (feedback scaffolding) */}
+      {/* TEMP - floating cell editor popover (feedback scaffolding) */}
       {editingCell && (() => {
         // Anchor near the clicked cell; clamp into the viewport so it stays visible.
         const POPOVER_WIDTH = 160;
@@ -1041,7 +1400,7 @@ export default function Home() {
                       fontWeight: 600,
                     }}
                   >
-                    {opt.code || '—'}
+                    {opt.code || ' - '}
                   </span>
                   <span>{opt.label}</span>
                 </button>
@@ -1051,7 +1410,7 @@ export default function Home() {
         );
       })()}
 
-      {/* TEMP — "Why did you change this?" feedback modal (feedback scaffolding) */}
+      {/* TEMP - "Why did you change this?" feedback modal (feedback scaffolding) */}
       {pendingChange && (
         <div
           onClick={(e) => { if (e.target === e.currentTarget) handleCancelEdit(); }}
@@ -1067,7 +1426,7 @@ export default function Home() {
             </div>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
               {pendingChange.empName} at {pendingChange.time}:{'  '}
-              {(pendingChange.oldTask || '—')} &rarr; {(pendingChange.newTask || '—')}
+              {(pendingChange.oldTask || ' - ')} &rarr; {(pendingChange.newTask || ' - ')}
             </p>
 
             <div style={{ marginBottom: '1.5rem' }}>
@@ -1185,16 +1544,17 @@ export default function Home() {
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50
         }}>
-          <div className="glass-panel animate-fade-in" style={{ padding: '2rem', width: '500px', backgroundColor: 'var(--bg-secondary)' }}>
+          <div className="glass-panel animate-fade-in" style={{ padding: '2rem', width: '640px', maxWidth: '92vw', backgroundColor: 'var(--bg-secondary)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2>Employee Capabilities</h2>
               <button onClick={() => setShowSettings(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={24} /></button>
             </div>
-            <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+            <div style={{ maxHeight: '400px', overflowY: 'auto', overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                     <th style={{ padding: '0.5rem' }}>Name</th>
+                    <th style={{ padding: '0.5rem' }}>Display name</th>
                     <th style={{ padding: '0.5rem', textAlign: 'center' }}>Can Walk (W)</th>
                     <th style={{ padding: '0.5rem', textAlign: 'center' }}>Can Sec (SEC)</th>
                     <th style={{ padding: '0.5rem', textAlign: 'center' }}>Door side</th>
@@ -1204,6 +1564,20 @@ export default function Home() {
                   {employees.map((emp, idx) => (
                     <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
                       <td style={{ padding: '0.5rem' }}>{emp.name}</td>
+                      <td style={{ padding: '0.5rem' }}>
+                        <input
+                          value={emp.displayName ?? ''}
+                          onChange={(e) => setEmpDisplayName(idx, e.target.value)}
+                          onBlur={() => commitEmpDisplayName(idx)}
+                          placeholder={emp.name}
+                          aria-label={`Display name for ${emp.name}`}
+                          style={{
+                            padding: '0.25rem 0.4rem', borderRadius: 'var(--radius-sm)',
+                            border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)',
+                            color: 'var(--text-primary)', fontFamily: 'inherit', fontSize: '0.8rem', width: '120px',
+                          }}
+                        />
+                      </td>
                       <td style={{ padding: '0.5rem', textAlign: 'center' }}>
                         <input type="checkbox" checked={emp.canWalk} onChange={() => toggleCapability(idx, 'canWalk')} />
                       </td>
@@ -1236,14 +1610,118 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* Add-a-helper picker: pull a reserve-pool employee onto this day's roster. */}
+      {showAddHelper && selectedDayIdx !== null && parsed && (() => {
+        const day = parsed.days[selectedDayIdx];
+        const inRoster = new Set(employees.map((e) => e.name));
+        const originalDoor = new Set(day.employees.map((e) => e.name));
+        const addedHelpers = employees.filter((e) => !originalDoor.has(e.name));
+        const q = helperSearch.trim().toLowerCase();
+        const candidates = day.additional
+          .filter((e) => !inRoster.has(e.name))
+          .filter((e) => !q || e.name.toLowerCase().includes(q));
+        return (
+          <div
+            onClick={(e) => { if (e.target === e.currentTarget) setShowAddHelper(false); }}
+            style={{
+              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', zIndex: 55, padding: '1rem',
+            }}
+          >
+            <div className="glass-panel animate-fade-in" style={{ padding: '1.75rem', width: '520px', maxWidth: '92vw', maxHeight: '86vh', overflowY: 'auto', backgroundColor: 'var(--bg-secondary)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.35rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <UserPlus size={20} color="var(--accent-secondary)" />
+                  <h2>Add a helper</h2>
+                </div>
+                <button onClick={() => setShowAddHelper(false)} title="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={22} /></button>
+              </div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                Pull in someone else scheduled on {day.dateLabel} when the door is short-staffed. After adding, click <strong>Auto Generate</strong> to rebuild the plan with them.
+              </p>
+
+              {addedHelpers.length > 0 && (
+                <div style={{ marginBottom: '1rem' }}>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Added helpers</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                    {addedHelpers.map((e) => (
+                      <span key={e.name} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.6rem', borderRadius: '999px', backgroundColor: 'var(--task-b-bg)', color: 'var(--task-b-text)', fontSize: '0.8rem' }}>
+                        {e.name}
+                        <button onClick={() => handleRemoveHelper(e.name)} title={`Remove ${e.name}`} aria-label={`Remove ${e.name}`} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', display: 'flex', padding: 0 }}>
+                          <X size={14} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {day.additional.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '1rem 0' }}>
+                  No one else is scheduled on this day, so there is no one to pull in.
+                </p>
+              ) : (
+                <>
+                  <div style={{ position: 'relative', marginBottom: '0.75rem' }}>
+                    <Search size={16} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                    <input
+                      type="text"
+                      value={helperSearch}
+                      onChange={(e) => setHelperSearch(e.target.value)}
+                      placeholder="Search by name…"
+                      style={{ width: '100%', padding: '0.55rem 0.75rem 0.55rem 2rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'inherit', fontSize: '0.9rem' }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '320px', overflowY: 'auto' }}>
+                    {candidates.length === 0 ? (
+                      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '0.5rem 0' }}>
+                        {q ? 'No matches.' : 'Everyone scheduled today is already on the roster.'}
+                      </p>
+                    ) : (
+                      candidates.map((e) => (
+                        <div key={e.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '0.5rem 0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-tertiary)' }}>
+                          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                            <span style={{ fontWeight: 600 }}>{e.name}</span>
+                            <span style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>shift {e.shift}</span>
+                          </span>
+                          <button
+                            onClick={() => handleAddHelper(e)}
+                            className="btn-primary"
+                            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.35rem 0.75rem', flexShrink: 0 }}
+                          >
+                            <UserPlus size={15} /> Add
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
 
-    {/* Printable A4 "Member Service Gameplan" — hidden on screen, shown on print. */}
+    {/* Printable A4 "Member Service Gameplan" - hidden on screen, shown on print. */}
     {isGenerated && selectedDayIdx !== null && parsed && (
       <GameplanPrint
         date={parsed.days[selectedDayIdx].dateLabel}
         roster={employees}
         plan={scheduleMatrix}
+      />
+    )}
+
+    {/* Reprint form for a saved plan chosen from the history list. Only on the
+        landing screen, where the builder's own print form isn't rendered, so
+        exactly one #gameplan-print exists at print time. */}
+    {!parsed && savedForPrint && (
+      <GameplanPrint
+        date={savedForPrint.date}
+        roster={savedForPrint.roster}
+        plan={savedForPrint.plan}
       />
     )}
     </>

@@ -16,9 +16,9 @@ reconstruct each decision without the running app.
 | ------------------- | -------------- | ---------------------------------------------------------------------------------------- |
 | `sessionId`         | `string`       | Unique id for this baseline (`crypto.randomUUID`); stamped onto every correction.         |
 | `generatedAt`       | `string`       | ISO-8601 timestamp of when the baseline Gameplan was auto-generated.                      |
-| `isWeekend`         | `boolean`      | Intended to flag weekend SEC rules. **Currently always `false`** — no UI toggle yet, and the generator does not branch on it. Treat as unreliable. |
+| `isWeekend`         | `boolean`      | Intended to flag weekend SEC rules. **Currently always `false`** - no UI toggle yet, and the generator does not branch on it. Treat as unreliable. |
 | `timeSlots`         | `string[]`     | Canonical 30-min slot labels, index-aligned with every `slotIdx` and the shift indices. Index `0` = `"7:00"` … last = `"0:00"`. A negative shift index counts back from index 0 (pre-7AM). |
-| `coverageRule`      | `object`       | `{ definition: string; min: number; target: number }` — what counts as door coverage, the floor (`min`, 3), and the target (4).|
+| `coverageRule`      | `object`       | `{ definition: string; min: number; target: number }` - what counts as door coverage, the floor (`min`, 3), and the target (4).|
 | `roster`            | `Employee[]`   | Deep snapshot of the employees the baseline was generated from. See **Employee** below.   |
 | `generatedGameplan` | `Gameplan`     | The auto-generated baseline, BEFORE any corrections. `Record<empName, Record<time, code>>`.|
 | `corrections`       | `Correction[]` | Every correction made against the baseline, in `sequence` order. See **Correction** below. |
@@ -40,7 +40,7 @@ reconstruct each decision without the running app.
 `Record<employeeName, Record<timeSlot, TaskCode>>`. Task codes:
 `""` (outside shift / empty), `"D"` (Door), `"W"` (Walk), `"B"` (Break),
 `"B/D"` (Break+Door combo), `"SEC"` (Security), `"FE"` (Front End), and the
-temporary `"FE HELP"` (Door short-handed — needs help; never emitted by the
+temporary `"FE HELP"` (Door short-handed - needs help; never emitted by the
 generator, only ever set by a manual correction).
 
 ---
@@ -51,7 +51,7 @@ generator, only ever set by a manual correction).
 | -------------------------- | -------------------- | --------------------------------------------------------------------------------------- |
 | `id`                       | `string`             | Stable unique id (`crypto.randomUUID`).                                                  |
 | `sessionId`                | `string`             | The `FeedbackSession.sessionId` this correction belongs to.                             |
-| `sequence`                 | `number`             | Monotonic 0-based ordinal. **Replay corrections in ascending `sequence`** — not by `timestamp`. |
+| `sequence`                 | `number`             | Monotonic 0-based ordinal. **Replay corrections in ascending `sequence`** - not by `timestamp`. |
 | `labeled`                  | `boolean`            | `true` = manager picked ≥1 reason (Save). `false` = kept without a reason (Skip).        |
 | `timestamp`                | `string`             | ISO-8601 time the correction was recorded.                                              |
 | `employeeName`             | `string`             | Employee whose cell was edited.                                                         |
@@ -66,7 +66,7 @@ generator, only ever set by a manual correction).
 | `reasons`                  | `CorrectionReason[]` | One or more structured reasons (see below).                                             |
 | `scope`                    | `CorrectionScope`    | How broadly the manager wants the change applied (see below).                           |
 | `note`                     | `string`             | Free-text explanation in the manager's own words (may be empty).                        |
-| `doorCoverageBefore`       | `number`             | Door-equivalent (`D`/`B/D`) count at `time` BEFORE this change — **cumulative** (reflects all lower-`sequence` corrections already applied), not baseline-relative. |
+| `doorCoverageBefore`       | `number`             | Door-equivalent (`D`/`B/D`) count at `time` BEFORE this change - **cumulative** (reflects all lower-`sequence` corrections already applied), not baseline-relative. |
 | `doorCoverageAfter`        | `number`             | Door-equivalent (`D`/`B/D`) count at `time` AFTER this change.                           |
 
 > **Replaying corrections.** Start from `generatedGameplan`, then apply each
@@ -74,13 +74,13 @@ generator, only ever set by a manual correction).
 > The result reproduces the manager's final grid. Because coverage numbers are
 > cumulative, they only line up if you replay in `sequence` order.
 >
-> **A moved break** appears as two corrections — a cell cleared (`"B" → ""` or
+> **A moved break** appears as two corrections - a cell cleared (`"B" → ""` or
 > `"B" → "D"`) and another set (`"" → "B"` or `"D" → "B"`), usually adjacent in
 > `sequence` and sharing a reason like `break-too-late`. Detect moves by diffing
 > the baseline against the replayed grid per employee.
 >
 > **`labeled: false`** (Skip) corrections still change the grid but carry no
-> reason — include them in replay, ignore them for rule-mining. Edits the
+> reason - include them in replay, ignore them for rule-mining. Edits the
 > manager undid (Cancel/Esc) are never recorded.
 
 ### `CorrectionReason` (string union; `reasons` is an array of these)

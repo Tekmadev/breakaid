@@ -1,36 +1,40 @@
--- BreakAid — canonical Supabase schema (Postgres).
+-- BreakAid - canonical Supabase schema (Postgres).
 --
 -- FRESH PROJECT? Run this whole file once, then you're done.
 -- EXISTING PROJECT (pre-MVP tables already created)? Run migration-mvp.sql
--- instead — it upgrades in place and is safe to re-run.
+-- instead - it upgrades in place and is safe to re-run.
 --
 -- Access model (the repo is PUBLIC and ships the anon key, so RLS is the real
 -- boundary):
---   • Roles live in each account's app_metadata JWT claim — "manager" or
---     "viewer" — written ONLY by the in-app admin API (service_role key).
+--   • Roles live in each account's app_metadata JWT claim - "manager" or
+--     "viewer" - written ONLY by the in-app admin API (service_role key).
 --   • employees:  managers only (read + write).
 --   • gameplans:  any signed-in user can READ (the /view phone page);
 --                 only managers can write. Audit columns are trigger-stamped.
 --   • The anon key alone (no session) can neither read nor write anything.
 
 -- ---------------------------------------------------------------------------
--- Role helper — is the caller a manager? Missing role counts as manager so
--- the original pre-roles account never locks out (backfill in migration-mvp).
+-- Role helper: is the caller a manager? A missing role counts as VIEWER (least
+-- privilege), so a stray or self-registered account can never reach manager
+-- access. The migration backfills the original pre-roles account to an explicit
+-- manager, and every admin-API account gets an explicit role, so no legitimate
+-- account is roleless.
 -- ---------------------------------------------------------------------------
 create or replace function public.is_manager()
 returns boolean
 language sql
 stable
 as $$
-  select coalesce(auth.jwt() -> 'app_metadata' ->> 'role', 'manager') = 'manager';
+  select coalesce(auth.jwt() -> 'app_metadata' ->> 'role', 'viewer') = 'manager';
 $$;
 
 -- ---------------------------------------------------------------------------
--- employees — persisted per-person settings the generator reads every build.
+-- employees - persisted per-person settings the generator reads every build.
 -- ---------------------------------------------------------------------------
 create table if not exists public.employees (
-  name        text primary key,             -- display name; the app's key
-  position    text,                          -- e.g. "086-Security", "MBR SRV"
+  name         text primary key,             -- roster name = the app's key
+  display_name text,                          -- friendlier label shown on the plan
+  position     text,                          -- e.g. "086-Security", "MBR SRV"
   can_walk    boolean not null default true,
   can_sec     boolean not null default false,
   door_side   text    not null default 'both'
@@ -61,7 +65,7 @@ create policy "managers full access to employees"
   using (public.is_manager()) with check (public.is_manager());
 
 -- ---------------------------------------------------------------------------
--- gameplans — finalized day plans (the printable Member Service Gameplan).
+-- gameplans - finalized day plans (the printable Member Service Gameplan).
 -- Keyed by date label; `save` upserts so re-finalizing a day overwrites it.
 -- created_by*/updated_by* are stamped server-side from the caller's JWT.
 -- ---------------------------------------------------------------------------

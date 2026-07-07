@@ -1,5 +1,5 @@
 /**
- * gameplanStore.ts — Async data-access seam for FINALIZED day gameplans.
+ * gameplanStore.ts - Async data-access seam for FINALIZED day gameplans.
  *
  * Same pattern as employeeStore.ts: callers use the `gameplanStore` singleton,
  * which is Supabase-backed when configured (table `public.gameplans`, see
@@ -42,7 +42,7 @@ function writeLocal(all: Record<string, FinalizedGameplan>): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
   } catch {
-    // Storage full/disabled — never crash the UI over persistence.
+    // Storage full/disabled - never crash the UI over persistence.
   }
 }
 
@@ -79,7 +79,7 @@ type GameplanRow = {
 };
 
 // Audit columns (created_by/updated_by) are DB-owned: a trigger stamps them
-// from the caller's JWT on every insert/update — the client never sends them.
+// from the caller's JWT on every insert/update - the client never sends them.
 const COLUMNS =
   "plan_date, is_weekend, roster, plan, finalized_at, created_by_email, updated_by_email";
 

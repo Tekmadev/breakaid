@@ -1,18 +1,18 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { RefreshCw, CalendarDays, Clock } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw, CalendarDays, Clock, LayoutGrid } from "lucide-react";
 import type { FinalizedGameplan, TaskCode } from "@/lib/types";
 import { TIME_SLOTS } from "@/lib/generator";
 import { gameplanStore } from "@/lib/gameplanStore";
 import { supabase } from "@/lib/supabaseClient";
-import SignOutButton from "@/components/SignOutButton";
+import { displayFor } from "@/lib/displayName";
+import AppHeader from "@/components/AppHeader";
 
 /**
- * /view — the read-only day view for door staff (viewer accounts) on their
+ * /view - the read-only day view for door staff (viewer accounts) on their
  * phones. Shows the finalized gameplan: who's on what RIGHT NOW (current
- * half-hour) and the full day table. No editing anywhere — and even if someone
+ * half-hour) and the full day table. No editing anywhere - and even if someone
  * tampered with the client, RLS only grants viewers SELECT on gameplans.
  *
  * If the signed-in account is linked to a roster name (app_metadata.
@@ -78,15 +78,27 @@ export default function ViewPage() {
   const [isManagerAcct, setIsManagerAcct] = useState(false);
   // Ticks every 30s so the "right now" section tracks the clock.
   const [nowIdx, setNowIdx] = useState<number>(() => currentSlotIdx());
+  // True once the viewer manually picks a day from the dropdown. Until then the
+  // page auto-follows: it always prefers TODAY's plan the moment it appears
+  // (e.g. the manager finalizes at 9:30 while the phone was already open on
+  // yesterday's plan) instead of getting stuck on a stale day.
+  const userPickedRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
       const all = await gameplanStore.list();
       setPlans(all);
       setSelectedDate((prev) => {
-        if (prev && all.some((p) => p.date === prev)) return prev;
         const today = todayLabel();
-        if (all.some((p) => p.date === today)) return today;
+        const hasToday = all.some((p) => p.date === today);
+        if (!userPickedRef.current) {
+          // Auto-follow mode: today if it exists, else the most recent plan.
+          if (hasToday) return today;
+          return all[0]?.date ?? prev ?? null;
+        }
+        // The viewer chose a day: keep it while it exists, else fall back.
+        if (prev && all.some((p) => p.date === prev)) return prev;
+        if (hasToday) return today;
         return all[0]?.date ?? null;
       });
     } catch {
@@ -97,7 +109,7 @@ export default function ViewPage() {
   }, []);
 
   useEffect(() => {
-    // Fetch-on-mount: load() is async — every setState inside it runs after an
+    // Fetch-on-mount: load() is async - every setState inside it runs after an
     // await, never synchronously in the effect body (rule can't see through it).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
@@ -154,32 +166,14 @@ export default function ViewPage() {
 
   return (
     <div className="animate-fade-in" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <header
-        className="header"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "0.75rem",
-          padding: "1rem 5%",
-          borderBottom: "3px solid var(--accent-secondary)",
-        }}
-      >
-        <span style={{ color: "var(--accent-secondary)", fontWeight: 700, fontSize: "1.05rem" }}>
-          BreakAid · Day View
-        </span>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          {isManagerAcct && (
-            <Link
-              href="/"
-              style={{ fontSize: "0.8rem", color: "var(--text-secondary)", textDecoration: "none", padding: "0.4rem 0.6rem" }}
-            >
-              Builder
-            </Link>
-          )}
-          <SignOutButton />
-        </div>
-      </header>
+      <AppHeader
+        title="BreakAid · Day View"
+        actions={
+          isManagerAcct
+            ? [{ kind: "link", label: "Builder", href: "/", icon: <LayoutGrid size={18} /> }]
+            : []
+        }
+      />
 
       <main style={{ flex: 1, padding: "1rem", maxWidth: "1100px", margin: "0 auto", width: "100%" }}>
         {loading ? (
@@ -199,7 +193,10 @@ export default function ViewPage() {
               <CalendarDays size={18} color="var(--accent-secondary)" />
               <select
                 value={selectedDate ?? ""}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                onChange={(e) => {
+                  userPickedRef.current = true;
+                  setSelectedDate(e.target.value);
+                }}
                 style={{
                   padding: "0.5rem 0.75rem",
                   borderRadius: "var(--radius-md)",
@@ -237,7 +234,7 @@ export default function ViewPage() {
                     }}
                   >
                     <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
-                      {me.name} · shift {me.shift}
+                      {displayFor(me)} · shift {me.shift}
                     </div>
                     {myCode ? (
                       <div style={{ display: "flex", alignItems: "baseline", gap: "0.6rem", flexWrap: "wrap" }}>
@@ -293,7 +290,7 @@ export default function ViewPage() {
                               fontSize: "0.8rem",
                             }}
                           >
-                            <strong>{e.name}</strong>
+                            <strong>{displayFor(e)}</strong>
                             <span
                               style={{
                                 padding: "0.05rem 0.4rem",
@@ -337,7 +334,7 @@ export default function ViewPage() {
                               backgroundColor: e.name === myName ? "var(--task-w-bg)" : "var(--bg-tertiary)",
                             }}
                           >
-                            <div style={{ fontWeight: 700 }}>{e.name}</div>
+                            <div style={{ fontWeight: 700 }}>{displayFor(e)}</div>
                             <div style={{ fontWeight: 400, color: "var(--text-secondary)", fontSize: "0.65rem" }}>{e.shift}</div>
                           </th>
                         ))}
@@ -397,7 +394,7 @@ export default function ViewPage() {
 
                 <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.75rem" }}>
                   Read-only view · finalized{" "}
-                  {plan.finalizedAt ? new Date(plan.finalizedAt).toLocaleString() : "—"}
+                  {plan.finalizedAt ? new Date(plan.finalizedAt).toLocaleString() : " - "}
                   {plan.updatedByEmail ? ` by ${plan.updatedByEmail}` : ""} · updates automatically
                 </p>
               </>

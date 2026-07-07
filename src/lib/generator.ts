@@ -1,5 +1,5 @@
 /**
- * generator.ts — Core scheduling engine for the BreakAid Gameplan (v2).
+ * generator.ts - Core scheduling engine for the BreakAid Gameplan (v2).
  *
  * This version encodes the real Costco door rules captured from the manager's
  * feedback. See the project memory "costco-scheduling-rules" for the source.
@@ -10,27 +10,27 @@
  * computeHelpRow(gameplan, employees, isWeekend?) → Record<timeSlot, boolean>
  *   (the far-right "FE HELP" understaffing indicator, computed AFTER assignment)
  *
- * Execution order (matters — do not reorder)
+ * Execution order (matters - do not reorder)
  * ------------------------------------------
- * 1. initializeWithDoor  — every active slot starts as Door (D, internal).
- * 2. assignSecurity      — fixed by closing time; weekday = 1 guard, weekend = 2.
- * 3. assignBreaks        — ≥6h → two 30-min breaks; <6h → one 15-min B/D.
+ * 1. initializeWithDoor - every active slot starts as Door (D, internal).
+ * 2. assignSecurity - fixed by closing time; weekday = 1 guard, weekend = 2.
+ * 3. assignBreaks - ≥6h → two 30-min breaks; <6h → one 15-min B/D.
  *                          MANDATORY: breaks override the coverage floor.
  *                          A security guard's last break sits right before SEC.
- * 4. assignWalks         — one per hour to the last-walk time; 11:00 → the
+ * 4. assignWalks - one per hour to the last-walk time; 11:00 → the
  *                          11-AM starter; weekend 18:00 → guard 1; rest fair.
- * 5. assignPush          — the 30-min slot right after close: keep ≥1 at the
+ * 5. assignPush - the 30-min slot right after close: keep ≥1 at the
  *                          exit door, rest → PUSH (cart pushing).
- * 6. assignFrontEnd      — open-hours Door overflow (> target) → FE; and any
+ * 6. assignFrontEnd - open-hours Door overflow (> target) → FE; and any
  *                          on-shift staff after the push window → FE.
- * 7. assignDoorSides     — LAST: every remaining internal "D" becomes IN
+ * 7. assignDoorSides - LAST: every remaining internal "D" becomes IN
  *                          (entrance) or OUT (exit). Split per slot: even count
  *                          → 50/50; odd count → the EXTRA person goes to the
  *                          EXIT (manager's rule: 3 on door = 1 IN / 2 OUT).
  *                          Rotation is fairness-first: ~1-hour stints
  *                          alternating sides, and after any interruption
  *                          (walk/break/FE) the person returns to whichever side
- *                          rebalances their own IN/OUT totals — so nobody can
+ *                          rebalances their own IN/OUT totals - so nobody can
  *                          camp on their preferred side. doorSide restrictions
  *                          ("in"-only / "out"-only) are always honoured.
  *
@@ -55,18 +55,18 @@ export const TIME_SLOTS: readonly string[] = [
 ];
 
 // Named slot indices used throughout the rules (all relative to TIME_SLOTS).
-const IDX_11AM = 8;      // "11:00" — the special "fresh arrival" walk hour
-const IDX_6PM  = 22;     // "18:00" — weekend guard-1 usually takes this walk
+const IDX_11AM = 8;      // "11:00" - the special "fresh arrival" walk hour
+const IDX_6PM  = 22;     // "18:00" - weekend guard-1 usually takes this walk
 
 // Door coverage policy.
 const MIN_DOOR_COVERAGE = 3;     // floor (breaks may still override it)
 const TARGET_DOOR_COVERAGE = 4;  // ideal; overflow beyond this goes to FE
 
-// FE HELP (understaffing) thresholds — see computeHelpRow.
+// FE HELP (understaffing) thresholds - see computeHelpRow.
 const HELP_BUSY_AT_OR_BELOW = 2;     // busy moment with ≤2 on the door → needs help
 const HELP_QUIET_AT_OR_BELOW = 1;    // quiet moment with ≤1 on the door → needs help
 
-// PUSH cap — at most this many on cart-pushing in the post-close window.
+// PUSH cap - at most this many on cart-pushing in the post-close window.
 const MAX_PUSH = 4;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ const MAX_PUSH = 4;
 // ─────────────────────────────────────────────────────────────────────────────
 
 type DayConfig = {
-  /** First CLOSED slot — the store entry closes at this slot's start time. */
+  /** First CLOSED slot - the store entry closes at this slot's start time. */
   closeIdx: number;
   /** Security begins half an hour before close. */
   securityStartIdx: number;
@@ -126,7 +126,7 @@ function isActiveAt(emp: Employee, slotIdx: number): boolean {
 }
 
 /**
- * Door-equivalent coverage at a slot — what counts as "on the door".
+ * Door-equivalent coverage at a slot - what counts as "on the door".
  * Counts IN + OUT (the final door codes), internal "D" (the pipeline's
  * pre-side placeholder, also present in legacy saved plans), and B/D.
  */
@@ -144,7 +144,7 @@ function countDoorCoverage(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Rule 1 — Door (D): default
+// Rule 1 - Door (D): default
 // ─────────────────────────────────────────────────────────────────────────────
 
 function initializeWithDoor(employees: readonly Employee[]): Gameplan {
@@ -165,7 +165,7 @@ function initializeWithDoor(employees: readonly Employee[]): Gameplan {
 type Guards = {
   /** Weekday single guard, or weekend "second" guard (covers until ~11:30 PM). */
   late: Employee | null;
-  /** Weekend "first" guard — ends 7:30 PM, covers only their last hour. */
+  /** Weekend "first" guard - ends 7:30 PM, covers only their last hour. */
   early: Employee | null;
   /** Slot where the late guard's SEC duty begins (their 2nd break sits before it). */
   lateSecStartIdx: number;
@@ -193,7 +193,7 @@ function identifyGuards(employees: readonly Employee[], cfg: DayConfig): Guards 
     return { late: latest, early: null, lateSecStartIdx: cfg.securityStartIdx, earlySecStartIdx: -1 };
   }
 
-  // Weekend: find the "first" guard — a canSec employee ending 7:30 PM (idx 25),
+  // Weekend: find the "first" guard - a canSec employee ending 7:30 PM (idx 25),
   // preferring the 11 AM starter; never the same person as the late guard.
   const endsAt730 = eligible.filter((e) => e.shiftEndIdx === 25 && e !== latest);
   const early =
@@ -233,7 +233,7 @@ function assignSecurity(
 /**
  * Find the best slot for a break near `targetIdx`, honouring the manager's rule
  * that breaks should sit close to their target (e.g. an earlier first break) at
- * a coverage-SAFE slot — not wherever coverage happens to be highest.
+ * a coverage-SAFE slot - not wherever coverage happens to be highest.
  *
  * Strategy: scan outward from the target (nearest first, earlier slot winning
  * ties) and take the first plain-Door slot meeting a coverage tier. We try the
@@ -350,20 +350,20 @@ function assignBreaksFor(
       }
     }
 
-    // Break 1 — bisect the pre-security stretch when pinned, else ~0.28 (a bit
+    // Break 1 - bisect the pre-security stretch when pinned, else ~0.28 (a bit
     // earlier than 1/3 for spacing).
     const target1 = pinnedSlot !== -1
       ? Math.round((Math.max(0, emp.shiftStartIdx) + pinnedSlot) / 2)
       : Math.round(emp.shiftStartIdx + span * 0.28);
     const slot1 = placeBreak(result, employees, emp, target1, pinnedSlot, "B");
 
-    // Break 2 for non-guards — near 2/3 (the guard's 2nd break is the pin above).
+    // Break 2 for non-guards - near 2/3 (the guard's 2nd break is the pin above).
     if (pinnedSecondBreakIdx === null) {
       const target2 = Math.round(emp.shiftStartIdx + span * 0.66);
       placeBreak(result, employees, emp, target2, slot1, "B");
     }
   } else {
-    // Short shift — a single 15-min break/door combo near the midpoint.
+    // Short shift - a single 15-min break/door combo near the midpoint.
     const target = Math.round(emp.shiftStartIdx + span * 0.5);
     placeBreak(result, employees, emp, target, -1, "B/D");
   }
@@ -414,7 +414,7 @@ function assignWalks(
     const time = TIME_SLOTS[tIdx];
     if (!time.endsWith(":00")) continue; // walks only at the top of the hour
 
-    // Special 1 — the 11 AM walk goes to whoever's shift starts at 11.
+    // Special 1 - the 11 AM walk goes to whoever's shift starts at 11.
     if (tIdx === IDX_11AM) {
       const starter = employees.find(
         (e) => e.shiftStartIdx === IDX_11AM && e.canWalk && isFreeDoor(e, time)
@@ -426,7 +426,7 @@ function assignWalks(
       }
     }
 
-    // Special 2 — weekend 6 PM walk goes to the early guard if available.
+    // Special 2 - weekend 6 PM walk goes to the early guard if available.
     if (cfg.weekend && tIdx === IDX_6PM && guards.early) {
       const g1 = guards.early;
       if (g1.canWalk && isFreeDoor(g1, time)) {
@@ -436,7 +436,7 @@ function assignWalks(
       }
     }
 
-    // Default — fewest walks first, stable roster-order tie-break (no randomness).
+    // Default - fewest walks first, stable roster-order tie-break (no randomness).
     const eligible = employees.filter(
       (e) => e.canWalk && isActiveAt(e, tIdx) && isFreeDoor(e, time)
     );
@@ -474,7 +474,7 @@ function assignPush(
   // Plain-Door people present in the close slot are the movable pool.
   const onDoor = employees.filter((e) => result[e.name][time] === "D");
   if (onDoor.length === 0) return result;
-  // Keep one at the exit door — prefer someone allowed at the exit, so an
+  // Keep one at the exit door - prefer someone allowed at the exit, so an
   // entrance-only (doorSide "in") person is never made the exit attendant.
   const keeper = onDoor.find((e) => (e.doorSide ?? "both") !== "in") ?? onDoor[0];
   let pushed = 0;
@@ -524,7 +524,7 @@ function assignFrontEnd(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Door sides — IN (entrance) / OUT (exit), fair hourly rotation
+// Door sides - IN (entrance) / OUT (exit), fair hourly rotation
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Per-person rotation memory used while sweeping the day slot by slot. */
@@ -540,7 +540,7 @@ type SideState = {
 const STINT_SLOTS = 2;
 
 /**
- * Final pass — convert every remaining internal "D" cell into IN or OUT.
+ * Final pass - convert every remaining internal "D" cell into IN or OUT.
  *
  * Per-slot split (manager's rule): exit gets the extra when odd.
  *   4 → 2 IN / 2 OUT · 3 → 1 IN / 2 OUT · 2 → 1 / 1 · 1 → OUT.
@@ -599,9 +599,9 @@ function assignDoorSides(
     let outLeft = flexible.length - inLeft;
 
     // Each flexible person's desired side + how strongly they want it:
-    //   3 — mid-stint (< 1h on this side, uninterrupted): keep the side.
-    //   2 — stint complete: swap sides.
-    //   1 — fresh/returning from interruption: pick the side that rebalances
+    //   3 - mid-stint (< 1h on this side, uninterrupted): keep the side.
+    //   2 - stint complete: swap sides.
+    //   1 - fresh/returning from interruption: pick the side that rebalances
     //       their own totals (tie → opposite of last side, else OUT).
     const opposite = (s: "IN" | "OUT"): "IN" | "OUT" => (s === "IN" ? "OUT" : "IN");
     const wishes = flexible.map((emp, rosterIdx) => {
@@ -664,7 +664,7 @@ export function computeHelpRow(
   for (let tIdx = 0; tIdx < TIME_SLOTS.length; tIdx++) {
     const time = TIME_SLOTS[tIdx];
     help[time] = false;
-    if (tIdx >= cfg.closeIdx) continue; // closed — no door-help expectation
+    if (tIdx >= cfg.closeIdx) continue; // closed - no door-help expectation
 
     const anyoneActive = employees.some((e) => isActiveAt(e, tIdx));
     if (!anyoneActive) continue;
@@ -684,7 +684,7 @@ export function computeHelpRow(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * generateGameplan — the v2 scheduling engine.
+ * generateGameplan - the v2 scheduling engine.
  *
  * @param employees  Roster parsed from the schedule.
  * @param isWeekend  Weekend vs weekday ruleset. If omitted, auto-detected from

@@ -1,8 +1,8 @@
 /**
- * excelExport.ts — download the finalized gameplan as a .xlsx that reproduces
+ * excelExport.ts - download the finalized gameplan as a .xlsx that reproduces
  * the paper "Member Service Gameplan" sheet: centered title, DATE line,
  * Name/Shift rows, grey separator, 8:00→21:30 time rows, black gridlines,
- * grey off-shift cells, trailing blank columns — print-ready on A4 portrait
+ * grey off-shift cells, trailing blank columns - print-ready on A4 portrait
  * (fit-to-width page setup baked in), black-and-white only.
  *
  * For managers who prefer the familiar Google Sheets / Excel print flow over
@@ -17,7 +17,9 @@ import {
   PRINT_END_IDX,
   PRINT_MIN_COLS,
   formatPaperDate,
+  isBoldCode,
 } from "./printLayout";
+import { displayFor } from "./displayName";
 
 const GREY_ARGB = "FFD3D3D3"; // same grey as the printed form
 
@@ -30,7 +32,7 @@ export async function exportGameplanXlsx(
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Gameplan", {
     pageSetup: {
-      paperSize: 9, // PaperSize.A4 (const enum — value inlined)
+      paperSize: 9, // PaperSize.A4 (const enum - value inlined)
       orientation: "portrait",
       fitToPage: true,
       fitToWidth: 1,
@@ -49,21 +51,21 @@ export async function exportGameplanXlsx(
   ws.getColumn(1).width = 7;
   for (let c = 2; c <= colCount; c++) ws.getColumn(c).width = 9;
 
-  // Row 1 — centered title across the whole grid.
+  // Row 1 - centered title across the whole grid.
   ws.mergeCells(1, 1, 1, colCount);
   const title = ws.getCell(1, 1);
   title.value = "Member Service Gameplan";
   title.font = { name: "Arial", size: 14, bold: true };
   title.alignment = center;
 
-  // Row 2 — DATE line, paper style ("DATE: Sat June 13").
+  // Row 2 - DATE line, paper style ("DATE: Sat June 13").
   ws.mergeCells(2, 1, 2, colCount);
   const dateCell = ws.getCell(2, 1);
   dateCell.value = `DATE: ${formatPaperDate(date)}`;
   dateCell.font = { name: "Arial", size: 9 };
   dateCell.alignment = { horizontal: "left", vertical: "middle" };
 
-  // Row 3 — Name row. Row 4 — Shift row. Row 5 — grey separator.
+  // Row 3 - Name row. Row 4 - Shift row. Row 5 - grey separator.
   const NAME_ROW = 3;
   const SHIFT_ROW = 4;
   const SEP_ROW = 5;
@@ -74,7 +76,7 @@ export async function exportGameplanXlsx(
   nameRow.getCell(1).value = "Name";
   shiftRow.getCell(1).value = "Shift";
   roster.forEach((e, i) => {
-    nameRow.getCell(2 + i).value = e.name;
+    nameRow.getCell(2 + i).value = displayFor(e);
     shiftRow.getCell(2 + i).value = e.shift;
   });
   for (let c = 1; c <= colCount; c++) {
@@ -90,11 +92,12 @@ export async function exportGameplanXlsx(
   }
   ws.getRow(SEP_ROW).height = 5;
 
-  // Time rows 8:00 → 21:30.
+  // Time rows 8:00 → 21:30. Row height is tuned so the 28 rows + header fill an
+  // A4 page (fit-to-page keeps it to exactly one sheet).
   for (let i = PRINT_START_IDX; i <= PRINT_END_IDX; i++) {
     const rowIdx = FIRST_TIME_ROW + (i - PRINT_START_IDX);
     const row = ws.getRow(rowIdx);
-    row.height = 21;
+    row.height = 24;
 
     const timeCell = row.getCell(1);
     timeCell.value = TIME_SLOTS[i];
@@ -107,12 +110,15 @@ export async function exportGameplanXlsx(
       const cell = row.getCell(c);
       cell.border = allBorders;
       cell.alignment = center;
-      cell.font = { name: "Arial", size: 9, bold: true };
-      if (emp) {
-        const active = i >= emp.shiftStartIdx && i < emp.shiftEndIdx;
-        if (active) {
-          cell.value = plan[emp.name]?.[TIME_SLOTS[i]] || "";
-        } else {
+      if (emp && i >= emp.shiftStartIdx && i < emp.shiftEndIdx) {
+        const code = plan[emp.name]?.[TIME_SLOTS[i]] || "";
+        cell.value = code;
+        // Only B/W/SEC/FE/FE HELP are bold; IN/OUT/PUSH/B/D regular weight.
+        cell.font = { name: "Arial", size: 9, bold: isBoldCode(code) };
+      } else {
+        cell.font = { name: "Arial", size: 9 };
+        if (emp) {
+          // Off-shift → grey, exactly like the printed form.
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREY_ARGB } };
         }
       }

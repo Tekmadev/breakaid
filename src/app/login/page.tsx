@@ -4,11 +4,13 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogIn, AlertCircle, RefreshCw, Lock } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import PasswordInput from "@/components/PasswordInput";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -16,6 +18,10 @@ export default function LoginPage() {
     e.preventDefault();
     if (!supabase) {
       setError("Authentication is not configured. Set the Supabase env vars.");
+      return;
+    }
+    if (!agreed) {
+      setError("Please agree to the Terms of Use & Privacy Policy to continue.");
       return;
     }
     setLoading(true);
@@ -108,18 +114,54 @@ export default function LoginPage() {
 
         <label style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
           <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)" }}>Password</span>
-          <input
-            type="password"
+          <PasswordInput
             autoComplete="current-password"
             required
             value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
+            onChange={(value) => {
+              setPassword(value);
               if (error) setError(null);
             }}
-            placeholder="••••••••"
-            style={inputStyle}
+            placeholder="Your password"
           />
+        </label>
+
+        <div style={{ marginTop: "-0.5rem", textAlign: "right" }}>
+          <a
+            href="/forgot-password"
+            style={{ fontSize: "0.8rem", color: "var(--accent-secondary)", textDecoration: "none" }}
+          >
+            Forgot password?
+          </a>
+        </div>
+
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "0.5rem",
+            fontSize: "0.8rem",
+            color: "var(--text-secondary)",
+            lineHeight: 1.45,
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={agreed}
+            onChange={(e) => {
+              setAgreed(e.target.checked);
+              if (error) setError(null);
+            }}
+            style={{ marginTop: "0.15rem", flexShrink: 0, cursor: "pointer" }}
+          />
+          <span>
+            I have read and agree to the{" "}
+            <a href="/terms" style={{ color: "var(--accent-secondary)" }}>
+              Terms of Use &amp; Privacy Policy
+            </a>
+            .
+          </span>
         </label>
 
         {error && (
@@ -143,21 +185,26 @@ export default function LoginPage() {
         <button
           type="submit"
           className="btn-primary"
-          disabled={loading}
+          disabled={loading || !agreed}
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             gap: "0.5rem",
             marginTop: "0.25rem",
-            opacity: loading ? 0.7 : 1,
-            cursor: loading ? "not-allowed" : "pointer",
+            opacity: loading || !agreed ? 0.7 : 1,
+            cursor: loading || !agreed ? "not-allowed" : "pointer",
           }}
         >
           {loading ? <RefreshCw className="animate-spin" size={18} /> : <LogIn size={18} />}
           {loading ? "Signing in…" : "Sign in"}
         </button>
       </form>
+
+      <nav style={{ display: "flex", gap: "1.25rem", fontSize: "0.8rem" }}>
+        <a href="/about" style={{ color: "var(--text-secondary)", textDecoration: "none" }}>About</a>
+        <a href="/terms" style={{ color: "var(--text-secondary)", textDecoration: "none" }}>Terms &amp; Privacy</a>
+      </nav>
     </div>
   );
 }

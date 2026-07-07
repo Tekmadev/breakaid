@@ -47,7 +47,7 @@
   --task-push-text: #c2410c;
   --task-none-bg: #ffffff;
 
-  /* Alert / danger — stays RED in both themes (unlike --accent-primary, which
+  /* Alert / danger - stays RED in both themes (unlike --accent-primary, which
      becomes blue in dark mode). Use for FE HELP and under-coverage warnings. */
   --alert-danger: #E31837;
   --alert-bg: #fee2e2;
@@ -168,6 +168,176 @@ body, html {
   max-width: 1200px;
   margin: 0 auto;
   padding: 2rem;
+}
+
+/* ── Responsive app header + burger nav ──────────────────────────────────── */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem clamp(1rem, 5%, 3rem);
+  border-bottom: 3px solid var(--accent-secondary);
+  background-color: var(--bg-secondary);
+  position: relative;
+}
+.app-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.app-header__logo {
+  height: 30px;
+  width: auto;
+  flex-shrink: 0;
+}
+.app-header__title {
+  color: var(--accent-secondary);
+  font-weight: 700;
+  font-size: 1.3rem;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  border-left: 2px solid var(--border-color);
+  padding-left: 1rem;
+}
+.app-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* Legal-page nav: never collapses to a burger - it just wraps so the About /
+   Terms / Back links stay reachable at any width. */
+.legal-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.app-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+.app-nav-btn:hover {
+  background-color: var(--border-color);
+}
+.app-nav-btn--primary {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+.app-nav-btn--primary:hover {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.app-header__burger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.app-header__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: clamp(1rem, 5%, 3rem);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 220px;
+  padding: 0.6rem;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+.app-header__menu .app-nav-btn {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+/* On desktop the inline actions are the nav; never show the burger dropdown
+   there (guards against a stale-open menu when a tablet rotates to wide). */
+@media (min-width: 861px) {
+  .app-header__menu {
+    display: none;
+  }
+}
+
+/* Collapse the inline actions into a burger below this width. */
+@media (max-width: 860px) {
+  .app-header__actions {
+    display: none;
+  }
+  .app-header__burger {
+    display: inline-flex;
+  }
+  .app-header__title {
+    font-size: 1.1rem;
+    padding-left: 0.75rem;
+  }
+  /* The legal header has no burger - stack its nav under the brand instead of
+     letting it overlap the title. */
+  .legal-header {
+    flex-wrap: wrap;
+  }
+  .legal-header .legal-nav {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* Legal / content pages (About, Terms). */
+.legal-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+  line-height: 1.65;
+}
+.legal-page h1 {
+  font-size: 1.9rem;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.5rem;
+}
+.legal-page h2 {
+  font-size: 1.15rem;
+  margin: 2rem 0 0.6rem;
+  color: var(--accent-secondary);
+}
+.legal-page p,
+.legal-page li {
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+}
+.legal-page ul {
+  padding-left: 1.25rem;
+  margin-bottom: 0.75rem;
+}
+.legal-page strong {
+  color: var(--text-primary);
 }
 
 /* ── Print: show ONLY the Member Service Gameplan form on an A4 page ──────── */

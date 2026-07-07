@@ -1,5 +1,5 @@
 /**
- * capabilities.ts — Low-level, synchronous localStorage CRUD for persisted
+ * capabilities.ts - Low-level, synchronous localStorage CRUD for persisted
  * employee profiles ({@link EmployeeRecord}), keyed by employee name.
  *
  * This is the localStorage backing for `localEmployeeStore` (the zero-config
@@ -7,8 +7,7 @@
  * code goes through the async `employeeStore` seam, not these functions directly.
  *
  * Storage shape: `Record<name, EmployeeRecord>` under STORAGE_KEY. It is
- * backward-compatible with the original `{ canWalk, canSec }`-only shape —
- * older entries are normalized on read (name filled from the key).
+ * backward-compatible with the original `{ canWalk, canSec }`-only shape -  * older entries are normalized on read (name filled from the key).
  */
 
 import type { EmployeeRecord } from "./types";
@@ -20,6 +19,7 @@ function normalize(name: string, raw: unknown): EmployeeRecord {
   const v = (raw ?? {}) as Partial<EmployeeRecord>;
   return {
     name, // always trust the map key as the canonical name
+    displayName: v.displayName,
     position: v.position,
     canWalk: v.canWalk ?? true,
     canSec: v.canSec ?? false,
@@ -51,7 +51,7 @@ function writeRecords(all: Record<string, EmployeeRecord>): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
   } catch {
-    // Storage full/disabled — never crash the scheduling UI over persistence.
+    // Storage full/disabled - never crash the scheduling UI over persistence.
   }
 }
 

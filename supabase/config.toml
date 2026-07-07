@@ -1,0 +1,23 @@
+# Supabase project configuration for BreakAid.
+#
+# The security-critical setting here is turning open sign-ups OFF. Accounts must
+# only ever be minted by the in-app admin API (which uses the service_role key),
+# never by an anonymous person calling the public signup endpoint with the anon
+# key that ships in the client bundle. With sign-ups disabled AND a missing role
+# defaulting to "viewer" (see is_manager() in schema.sql), there is no path for a
+# self-registered account to gain manager access.
+#
+# NOTE: this file documents and version-controls the intent. For the HOSTED
+# project the authoritative switch is the dashboard toggle:
+#   Authentication > Sign In / Providers > Email > "Allow new users to sign up" = OFF
+# Set it there as well. This file only takes effect if the project is managed
+# with the Supabase CLI.
+
+[auth]
+# Master switch: disallow ALL new sign-ups (email, phone, OAuth).
+enable_signup = false
+
+[auth.email]
+# Belt-and-suspenders: no email sign-ups, and confirmations required if that
+# ever changes. Password reset (recovery) is unaffected by this setting.
+enable_signup = false

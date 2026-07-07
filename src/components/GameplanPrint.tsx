@@ -7,22 +7,29 @@ import {
   PRINT_MIN_COLS,
   PRINT_GREY,
   formatPaperDate,
+  isBoldCode,
 } from "@/lib/printLayout";
+import { displayFor } from "@/lib/displayName";
 
 /**
- * GameplanPrint — renders the printable "Member Service Gameplan" A4 form for a
+ * GameplanPrint - renders the printable "Member Service Gameplan" A4 form for a
  * finalized day, reproducing the paper layout: centered title, DATE, a Name row
  * and a Shift row, then 30-min time rows from 8:00 to 21:30. Each cell shows the
  * task code; cells outside a person's shift are greyed out.
  *
  * Hidden on screen and shown only when printing (see #gameplan-print rules in
- * globals.css). The fixed 8:00–21:30 range matches the paper exactly — security
+ * globals.css). The fixed 8:00–21:30 range matches the paper exactly - security
  * or PUSH past 21:30 is intentionally not shown.
  */
 
 const MIN_COLS = PRINT_MIN_COLS;
 const GREY = PRINT_GREY;
 const BORDER = "1px solid #000";
+
+// Time-row height, tuned so the 28 rows (8:00→21:30) plus the header rows fill
+// an A4 portrait page (≈28.1cm usable inside the 8mm print margin) instead of
+// leaving the lower third blank - while keeping that margin untouched.
+const TIME_ROW_H = "0.86cm";
 
 export default function GameplanPrint({
   date,
@@ -71,7 +78,7 @@ export default function GameplanPrint({
             <td style={labelCell}>Name</td>
             {roster.map((e) => (
               <td key={`n-${e.name}`} style={{ ...cell, fontWeight: 600 }}>
-                {e.name}
+                {displayFor(e)}
               </td>
             ))}
             {pad.map((_, i) => (
@@ -108,7 +115,7 @@ export default function GameplanPrint({
             const time = TIME_SLOTS[i];
             return (
               <tr key={time}>
-                <td style={{ ...cell, fontWeight: 600 }}>{time}</td>
+                <td style={{ ...cell, height: TIME_ROW_H, fontWeight: 600 }}>{time}</td>
                 {roster.map((e) => {
                   const active = i >= e.shiftStartIdx && i < e.shiftEndIdx;
                   const code = plan[e.name]?.[time] || "";
@@ -117,7 +124,10 @@ export default function GameplanPrint({
                       key={`${e.name}-${time}`}
                       style={{
                         ...cell,
-                        fontWeight: 700,
+                        height: TIME_ROW_H,
+                        // Only the "action" codes (B/W/SEC/FE/FE HELP) are bold;
+                        // IN/OUT/PUSH/B/D print regular weight.
+                        fontWeight: active && isBoldCode(code) ? 700 : 400,
                         background: active ? "#fff" : GREY,
                       }}
                     >
@@ -126,7 +136,7 @@ export default function GameplanPrint({
                   );
                 })}
                 {pad.map((_, p) => (
-                  <td key={`p-${p}-${time}`} style={cell} />
+                  <td key={`p-${p}-${time}`} style={{ ...cell, height: TIME_ROW_H }} />
                 ))}
               </tr>
             );
