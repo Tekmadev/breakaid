@@ -208,6 +208,69 @@ body, html {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+/* The brand is a link home; keep it looking like the brand, not a link. */
+a.app-header__brand {
+  text-decoration: none;
+  color: inherit;
+}
+a.app-header__brand:hover .app-header__title {
+  color: var(--accent-primary);
+}
+
+/* Footer: the standard, out-of-the-way home for the legal links. */
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  flex-wrap: wrap;
+  padding: 1.1rem 1.5rem;
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.app-footer__note {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.app-footer__love {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.app-footer__heart {
+  color: var(--alert-danger);
+  fill: var(--alert-danger);
+  vertical-align: middle;
+}
+.app-footer__links {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.app-footer__links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.app-footer__links a:hover {
+  color: var(--accent-secondary);
+  text-decoration: underline;
+}
+.app-footer__sep {
+  color: var(--text-muted);
+}
+@media (max-width: 600px) {
+  .app-footer {
+    justify-content: center;
+    text-align: center;
+  }
+  .app-footer__note {
+    align-items: center;
+  }
+}
 /* Legal-page nav: never collapses to a burger - it just wraps so the About /
    Terms / Back links stay reachable at any width. */
 .legal-nav {

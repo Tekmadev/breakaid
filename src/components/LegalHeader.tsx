@@ -10,7 +10,7 @@ import { ArrowLeft } from "lucide-react";
 export default function LegalHeader() {
   return (
     <header className="app-header legal-header">
-      <div className="app-header__brand">
+      <Link href="/" className="app-header__brand" aria-label="Go to home">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="https://upload.wikimedia.org/wikipedia/commons/5/59/Costco_Wholesale_logo_2010-10-26.svg"
@@ -18,7 +18,7 @@ export default function LegalHeader() {
           className="app-header__logo"
         />
         <span className="app-header__title">BreakAid Gameplan</span>
-      </div>
+      </Link>
       <nav className="legal-nav">
         <Link href="/about" className="app-nav-btn">About</Link>
         <Link href="/terms" className="app-nav-btn">Terms &amp; Privacy</Link>

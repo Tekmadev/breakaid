@@ -3,16 +3,16 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Menu, X, LogOut, Info, FileText } from "lucide-react";
+import { Menu, X, LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
 /**
  * AppHeader - the shared, responsive top bar for every authenticated page.
  *
  * Above 860px the page-specific actions render inline; below it they collapse
- * into a burger menu so the header never overflows on phones/tablets. Every
- * header also gets the common About / Terms links and a Sign out action, so
- * those live in exactly one place.
+ * into a burger menu so the header never overflows on phones/tablets. The brand
+ * links home; Sign out is always the last action. The About / Terms links live
+ * in the footer (AppFooter), not here.
  */
 
 export type HeaderAction =
@@ -43,11 +43,9 @@ export default function AppHeader({
     router.refresh();
   };
 
-  // Page actions first, then the common links, then Sign out (always last).
+  // Page actions first, then Sign out (always last). About / Terms are in the footer.
   const items: HeaderAction[] = [
     ...actions,
-    { kind: "link", label: "About", href: "/about", icon: <Info size={18} /> },
-    { kind: "link", label: "Terms & Privacy", href: "/terms", icon: <FileText size={18} /> },
     { kind: "button", label: "Sign out", onClick: signOut, icon: <LogOut size={18} /> },
   ];
 
@@ -83,7 +81,7 @@ export default function AppHeader({
 
   return (
     <header className="app-header">
-      <div className="app-header__brand">
+      <Link href="/" className="app-header__brand" aria-label="Go to home">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="https://upload.wikimedia.org/wikipedia/commons/5/59/Costco_Wholesale_logo_2010-10-26.svg"
@@ -91,7 +89,7 @@ export default function AppHeader({
           className="app-header__logo"
         />
         <span className="app-header__title">{title}</span>
-      </div>
+      </Link>
 
       {/* Desktop inline actions */}
       <nav className="app-header__actions">{items.map(renderItem)}</nav>

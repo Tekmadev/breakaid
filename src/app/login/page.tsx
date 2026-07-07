@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogIn, AlertCircle, RefreshCw, Lock } from "lucide-react";
+import { LogIn, AlertCircle, RefreshCw, Lock, Heart } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import PasswordInput from "@/components/PasswordInput";
 
@@ -205,6 +205,12 @@ export default function LoginPage() {
         <a href="/about" style={{ color: "var(--text-secondary)", textDecoration: "none" }}>About</a>
         <a href="/terms" style={{ color: "var(--text-secondary)", textDecoration: "none" }}>Terms &amp; Privacy</a>
       </nav>
+
+      <p style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", color: "var(--text-muted)", margin: 0 }}>
+        Made with{" "}
+        <Heart size={12} style={{ color: "var(--alert-danger)", fill: "var(--alert-danger)", verticalAlign: "middle" }} />{" "}
+        by Kazi Shajeedul Islam
+      </p>
     </div>
   );
 }

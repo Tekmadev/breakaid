@@ -15,6 +15,7 @@ import type { DoorSide, EmployeeRecord } from "@/lib/types";
 import { employeeStore } from "@/lib/employeeStore";
 import { hasSupabaseEnv } from "@/lib/supabaseClient";
 import AppHeader from "@/components/AppHeader";
+import AppFooter from "@/components/AppFooter";
 
 /** Format an ISO timestamp as a short, locale date - or " - " when absent. */
 function formatUpdated(iso?: string): string {
@@ -387,6 +388,7 @@ export default function EmployeesPage() {
           )}
         </div>
       </main>
+      <AppFooter />
     </div>
   );
 }

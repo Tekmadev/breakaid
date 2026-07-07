@@ -13,6 +13,7 @@ import { exportGameplanXlsx } from '@/lib/excelExport';
 import { isPlanEditable } from '@/lib/planLock';
 import { displayFor } from '@/lib/displayName';
 import AppHeader from '@/components/AppHeader';
+import AppFooter from '@/components/AppFooter';
 import GameplanPrint from '@/components/GameplanPrint';
 // TEMPORARY - feedback capture scaffolding for algorithm training. Safe to delete once deterministic rules are finalized.
 import {
@@ -1326,6 +1327,8 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      <AppFooter />
 
       {/* TEMP - floating cell editor popover (feedback scaffolding) */}
       {editingCell && (() => {

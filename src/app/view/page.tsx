@@ -8,6 +8,7 @@ import { gameplanStore } from "@/lib/gameplanStore";
 import { supabase } from "@/lib/supabaseClient";
 import { displayFor } from "@/lib/displayName";
 import AppHeader from "@/components/AppHeader";
+import AppFooter from "@/components/AppFooter";
 
 /**
  * /view - the read-only day view for door staff (viewer accounts) on their
@@ -402,6 +403,7 @@ export default function ViewPage() {
           </>
         )}
       </main>
+      <AppFooter />
     </div>
   );
 }

@@ -15,6 +15,7 @@ import {
 import type { EmployeeRecord } from "@/lib/types";
 import { employeeStore } from "@/lib/employeeStore";
 import AppHeader from "@/components/AppHeader";
+import AppFooter from "@/components/AppFooter";
 
 /**
  * Users - manager-only account administration (backed by /api/admin/users).
@@ -429,6 +430,7 @@ export default function UsersPage() {
           )}
         </div>
       </main>
+      <AppFooter />
     </div>
   );
 }
