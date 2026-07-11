@@ -139,6 +139,16 @@ export type EmployeeRecord = {
   /** Door-side restriction - "both" unless the person can only do one side. */
   doorSide: DoorSide;
 
+  /**
+   * True if this person should NOT be auto-placed on the door team, even though
+   * the schedule file still lists them under Security (e.g. their position
+   * hasn't been updated in the source system yet). Managers set this by choosing
+   * "permanently off the door" when swapping staff. Default/undefined = on the
+   * door. They can still be added back for a single day, and this is reversible
+   * from the Employees page.
+   */
+  doorExcluded?: boolean;
+
   /** Most recent shift label seen for this person, for at-a-glance context. */
   lastShift?: string;
 

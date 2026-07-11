@@ -24,6 +24,7 @@ function normalize(name: string, raw: unknown): EmployeeRecord {
     canWalk: v.canWalk ?? true,
     canSec: v.canSec ?? false,
     doorSide: v.doorSide ?? "both",
+    doorExcluded: v.doorExcluded ?? false,
     lastShift: v.lastShift,
     updatedAt: v.updatedAt,
   };

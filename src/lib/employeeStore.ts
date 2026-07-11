@@ -62,11 +62,12 @@ type EmployeeRow = {
   can_walk: boolean;
   can_sec: boolean;
   door_side: string | null;
+  // Optional: absent from the result until the `door_excluded` migration runs,
+  // so reads work on both the old and new schema (see rowToRecord's `?? false`).
+  door_excluded?: boolean | null;
   last_shift: string | null;
   updated_at: string | null;
 };
-
-const COLUMNS = "name, display_name, position, can_walk, can_sec, door_side, last_shift, updated_at";
 
 const toDoorSide = (v: string | null): EmployeeRecord["doorSide"] =>
   v === "in" || v === "out" ? v : "both";
@@ -78,6 +79,7 @@ const rowToRecord = (r: EmployeeRow): EmployeeRecord => ({
   canWalk: r.can_walk,
   canSec: r.can_sec,
   doorSide: toDoorSide(r.door_side),
+  doorExcluded: r.door_excluded ?? false,
   lastShift: r.last_shift ?? undefined,
   updatedAt: r.updated_at ?? undefined,
 });
@@ -94,15 +96,18 @@ function patchToRow(patch: Partial<EmployeeRecord> & { name: string }): Record<s
   if ("canWalk" in patch) row.can_walk = patch.canWalk;
   if ("canSec" in patch) row.can_sec = patch.canSec;
   if ("doorSide" in patch) row.door_side = patch.doorSide ?? "both";
+  if ("doorExcluded" in patch) row.door_excluded = patch.doorExcluded ?? false;
   if ("lastShift" in patch) row.last_shift = patch.lastShift ?? null;
   return row;
 }
 
 export const supabaseEmployeeStore: EmployeeStore = {
   async list() {
+    // select("*") (not an explicit column list) so a not-yet-migrated database
+    // that lacks `door_excluded` still returns rows instead of erroring.
     const { data, error } = await supabase!
       .from("employees")
-      .select(COLUMNS)
+      .select("*")
       .order("name", { ascending: true });
     if (error) throw error;
     return ((data as EmployeeRow[] | null) ?? []).map(rowToRecord);
@@ -111,7 +116,7 @@ export const supabaseEmployeeStore: EmployeeStore = {
     const { data, error } = await supabase!
       .from("employees")
       .upsert(patchToRow(patch), { onConflict: "name" })
-      .select(COLUMNS)
+      .select("*")
       .single();
     if (error) throw error;
     return rowToRecord(data as EmployeeRow);

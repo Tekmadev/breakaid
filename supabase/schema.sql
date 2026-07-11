@@ -39,6 +39,7 @@ create table if not exists public.employees (
   can_sec     boolean not null default false,
   door_side   text    not null default 'both'
               check (door_side in ('both', 'in', 'out')),
+  door_excluded boolean not null default false, -- kept OFF the auto-built door team
   last_shift  text,                          -- most recent shift label seen
   updated_at  timestamptz not null default now()
 );

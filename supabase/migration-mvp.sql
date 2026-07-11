@@ -16,6 +16,12 @@ alter table public.employees
 alter table public.employees
   add column if not exists display_name text;
 
+-- ── 1c) Door-team exclusion. A person still listed under Security in the file
+-- who no longer works the door: managers flag them "permanently off the door"
+-- when swapping staff, and the generator skips them on every future upload.
+alter table public.employees
+  add column if not exists door_excluded boolean not null default false;
+
 -- ── 2) Roles ─────────────────────────────────────────────────────────────────
 -- Roles live in each account's app_metadata (inside the JWT). Only the admin
 -- API (service_role) can write app_metadata - users cannot change their own.

@@ -78,6 +78,26 @@ export default function EmployeesPage() {
     [upsertLocal]
   );
 
+  // "On door team" toggle. Unchecking flags the person "permanently off the
+  // door" so every future upload skips them (used when someone is still tagged
+  // Security in the file but no longer works the door). Reversible here.
+  const handleDoorTeam = useCallback(
+    async (rec: EmployeeRecord) => {
+      try {
+        const saved = await employeeStore.upsert({
+          name: rec.name,
+          doorExcluded: !(rec.doorExcluded ?? false),
+        });
+        upsertLocal(saved);
+      } catch {
+        // Persisting this needs the `door_excluded` column (migration-mvp.sql).
+        // Until it exists on the live database the toggle is a no-op rather than
+        // an unhandled error.
+      }
+    },
+    [upsertLocal]
+  );
+
   // Position: edit locally on each keystroke, commit to the store on blur.
   const handlePositionChange = (name: string, value: string) => {
     setRecords((prev) => prev.map((r) => (r.name === name ? { ...r, position: value } : r)));
@@ -170,9 +190,11 @@ export default function EmployeesPage() {
             Set each person&apos;s <strong>display name</strong> (the friendlier label shown on the
             gameplan; leave it blank to use their schedule name), who can <strong>Walk (W)</strong>,
             who can do <strong>Security (SEC)</strong>, and any <strong>door-side restriction</strong>{" "}
-            (e.g. entrance-only for medical reasons) once here. The generator reads these every time you
-            build a gameplan, so you never re-set them per upload. People appear here automatically
-            after you open a day in the builder, or add them manually below.
+            (e.g. entrance-only for medical reasons) once here. Uncheck <strong>On door team</strong> for
+            anyone still listed under Security in the file who no longer works the door, so the generator
+            skips them. The generator reads these every time you build a gameplan, so you never re-set them
+            per upload. People appear here automatically after you open a day in the builder, or add them
+            manually below.
           </p>
 
           {/* Storage notice */}
@@ -293,6 +315,7 @@ export default function EmployeesPage() {
                       <th style={{ ...thStyle, textAlign: "center" }}>Can Walk (W)</th>
                       <th style={{ ...thStyle, textAlign: "center" }}>Can Sec (SEC)</th>
                       <th style={{ ...thStyle, textAlign: "center" }}>Door side</th>
+                      <th style={{ ...thStyle, textAlign: "center" }}>On door team</th>
                       <th style={thStyle}>Updated</th>
                       <th style={{ ...thStyle, textAlign: "center" }}>Remove</th>
                     </tr>
@@ -351,6 +374,15 @@ export default function EmployeesPage() {
                             <option value="in">Entrance only</option>
                             <option value="out">Exit only</option>
                           </select>
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={!(rec.doorExcluded ?? false)}
+                            onChange={() => handleDoorTeam(rec)}
+                            aria-label={`${rec.name} on the door team`}
+                            title={rec.doorExcluded ? "Off the auto-built door team - checked = put back on" : "On the door team"}
+                          />
                         </td>
                         <td style={{ ...tdStyle, color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "nowrap" }}>
                           {formatUpdated(rec.updatedAt)}
