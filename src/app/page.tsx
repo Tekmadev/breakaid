@@ -473,6 +473,7 @@ export default function Home() {
     // Locked past day: never regenerate (read-only, print/export only).
     if (selectedDayIdx === null || !parsed) return;
     if (!isPlanEditable(parsed.days[selectedDayIdx].dateLabel)) return;
+    if (!employees.length) return; // no door staff: nothing to schedule
     runGenerate(employees);
   };
 
@@ -540,6 +541,7 @@ export default function Home() {
     if (!isGenerated || selectedDayIdx === null || !parsed) return;
     // A past day is locked: it can be reprinted/exported but never re-finalized.
     if (!isPlanEditable(parsed.days[selectedDayIdx].dateLabel)) return;
+    if (!employees.length) return; // never save an empty plan
     setSaveState('saving');
     try {
       await gameplanStore.save({
@@ -592,8 +594,8 @@ export default function Home() {
       let done = 0;
       let skipped = 0;
       for (const day of parsed.days) {
-        // Skip past days: they are locked and must not be (re)finalized.
-        if (!isPlanEditable(day.dateLabel)) {
+        // Skip past days (locked) and days with no door staff (nothing to plan).
+        if (!isPlanEditable(day.dateLabel) || day.employees.length === 0) {
           skipped++;
           continue;
         }
@@ -806,8 +808,17 @@ export default function Home() {
   // A past day is locked: read-only, print and Excel export only.
   const dayEditable =
     parsed && selectedDayIdx !== null ? isPlanEditable(parsed.days[selectedDayIdx].dateLabel) : true;
-  // How many days in the uploaded file are still editable (for the bulk button).
-  const editableDaysCount = parsed ? parsed.days.filter((d) => isPlanEditable(d.dateLabel)).length : 0;
+  // How many days in the uploaded file are still editable AND have door staff
+  // (for the bulk button and its progress count).
+  const editableDaysCount = parsed
+    ? parsed.days.filter((d) => isPlanEditable(d.dateLabel) && d.employees.length > 0).length
+    : 0;
+
+  // Roster-health warnings for the open day, shown once a plan is generated.
+  const noRoster = selectedDayIdx !== null && employees.length === 0;
+  const noSecurity = isGenerated && employees.length > 0 && !employees.some((e) => e.canSec);
+  const noExit =
+    isGenerated && employees.length > 0 && employees.every((e) => (e.doorSide ?? 'both') === 'in');
 
   // Dashboard history panel - the list of finalized gameplans with reprint /
   // re-export actions. Rendered on the landing (no-file) screen.
@@ -935,6 +946,26 @@ export default function Home() {
               Generate the whole week at once, or open a single day to review it.
             </p>
 
+            {/* Surface the parser's warnings (e.g. a day with no door staff, or a
+                file whose section names weren't recognized) instead of dropping them. */}
+            {parsed.warnings.length > 0 && (
+              <div
+                style={{
+                  display: 'flex', flexDirection: 'column', gap: '0.35rem',
+                  padding: '0.85rem 1rem', marginBottom: '1.25rem',
+                  borderRadius: 'var(--radius-md)', border: '1px solid var(--alert-danger)',
+                  backgroundColor: 'var(--alert-bg)', color: 'var(--alert-text)',
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, fontSize: '0.85rem' }}>
+                  <AlertCircle size={16} /> Heads up on this schedule file
+                </span>
+                {parsed.warnings.map((w, i) => (
+                  <span key={i} style={{ fontSize: '0.82rem' }}>· {w}</span>
+                ))}
+              </div>
+            )}
+
             {/* Generate & finalize every day in one pass. */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
               <button
@@ -958,7 +989,7 @@ export default function Home() {
               </button>
               {bulkState === 'done' && (
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: 'var(--task-b-text)', fontSize: '0.85rem', fontWeight: 600 }}>
-                  <Check size={16} /> Saved {bulkDone} day{bulkDone === 1 ? '' : 's'}{bulkSkipped > 0 ? `, skipped ${bulkSkipped} past day${bulkSkipped === 1 ? '' : 's'}` : ''}. Find them below and on the dashboard.
+                  <Check size={16} /> Saved {bulkDone} day{bulkDone === 1 ? '' : 's'}{bulkSkipped > 0 ? `, skipped ${bulkSkipped} day${bulkSkipped === 1 ? '' : 's'} (past or no staff)` : ''}. Find them below and on the dashboard.
                 </span>
               )}
               {bulkState === 'error' && (
@@ -1057,13 +1088,19 @@ export default function Home() {
                 </button>
                 <button
                   onClick={handleAutoGenerate}
-                  disabled={!dayEditable}
+                  disabled={!dayEditable || noRoster}
                   className="btn-primary"
-                  title={dayEditable ? 'Generate the gameplan from the schedule rules' : 'This day has passed and is locked'}
+                  title={
+                    noRoster
+                      ? 'No door staff for this day'
+                      : dayEditable
+                        ? 'Generate the gameplan from the schedule rules'
+                        : 'This day has passed and is locked'
+                  }
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.5rem',
-                    opacity: dayEditable ? 1 : 0.5,
-                    cursor: dayEditable ? 'pointer' : 'not-allowed',
+                    opacity: dayEditable && !noRoster ? 1 : 0.5,
+                    cursor: dayEditable && !noRoster ? 'pointer' : 'not-allowed',
                   }}
                 >
                   <Play size={18} />
@@ -1203,6 +1240,26 @@ export default function Home() {
             </div>
             )}
 
+            {(noRoster || noSecurity || noExit) && (
+              <div style={{ marginBottom: '1rem', padding: '0.85rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--alert-danger)', backgroundColor: 'var(--alert-bg)', color: 'var(--alert-text)', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                {noRoster && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0 }} /> No door staff are scheduled for this day, so there is nothing to generate.
+                  </span>
+                )}
+                {noSecurity && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0 }} /> No security-trained staff on this day, so SEC is left unassigned. Set who can do Security under Capabilities.
+                  </span>
+                )}
+                {noExit && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0 }} /> Everyone on the door is entrance-only, so the exit will be unstaffed. Check the door-side settings under Capabilities.
+                  </span>
+                )}
+              </div>
+            )}
+
             {dayEditable && rosterDirty && (
               <div style={{
                 marginBottom: '1rem', padding: '0.75rem 1rem',
@@ -1317,7 +1374,7 @@ export default function Home() {
               </div>
             )}
 
-            {dayEditable && !isGenerated && (
+            {dayEditable && !isGenerated && !noRoster && (
               <div style={{ marginTop: '2rem', padding: '1rem', backgroundColor: 'var(--task-w-bg)', color: 'var(--task-w-text)', borderRadius: 'var(--radius-md)' }}>
                 <p style={{ fontSize: '0.875rem' }}>
                   <strong>Tip:</strong> Click <strong>Auto Generate</strong> to populate the Gameplan from the schedule rules. After generating, click any cell to adjust it and record why.
