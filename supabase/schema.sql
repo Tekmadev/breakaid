@@ -126,3 +126,47 @@ create policy "managers update gameplans"
 create policy "managers delete gameplans"
   on public.gameplans for delete to authenticated
   using (public.is_manager());
+
+-- ---------------------------------------------------------------------------
+-- Self-service display name (the staff /profile page). A viewer has NO direct
+-- access to the employees table; these SECURITY DEFINER helpers let an account
+-- read and set ONLY its own display name, matched by its app_metadata
+-- employee_name claim. Nothing else on the table is ever exposed to a viewer.
+-- ---------------------------------------------------------------------------
+create or replace function public.get_my_display_name()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select display_name from public.employees
+  where name = auth.jwt() -> 'app_metadata' ->> 'employee_name';
+$$;
+
+create or replace function public.set_my_display_name(new_display_name text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  my_name text := auth.jwt() -> 'app_metadata' ->> 'employee_name';
+begin
+  if my_name is null or my_name = '' then
+    raise exception 'This account is not linked to a schedule name.';
+  end if;
+  update public.employees
+    set display_name = nullif(btrim(new_display_name), '')
+    where name = my_name;
+  if not found then
+    insert into public.employees (name, display_name)
+      values (my_name, nullif(btrim(new_display_name), ''));
+  end if;
+end;
+$$;
+
+revoke all on function public.get_my_display_name() from public;
+revoke all on function public.set_my_display_name(text) from public;
+grant execute on function public.get_my_display_name() to authenticated;
+grant execute on function public.set_my_display_name(text) to authenticated;

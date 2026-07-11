@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Menu, X, LogOut } from "lucide-react";
+import { Menu, X, LogOut, UserCog } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
 /**
@@ -11,8 +11,8 @@ import { supabase } from "@/lib/supabaseClient";
  *
  * Above 860px the page-specific actions render inline; below it they collapse
  * into a burger menu so the header never overflows on phones/tablets. The brand
- * links home; Sign out is always the last action. The About / Terms links live
- * in the footer (AppFooter), not here.
+ * links home; every header gets a Profile link and a Sign out action (last).
+ * The About / Terms links live in the footer (AppFooter), not here.
  */
 
 export type HeaderAction =
@@ -43,9 +43,11 @@ export default function AppHeader({
     router.refresh();
   };
 
-  // Page actions first, then Sign out (always last). About / Terms are in the footer.
+  // Page actions first, then Profile, then Sign out (always last). About / Terms
+  // are in the footer.
   const items: HeaderAction[] = [
     ...actions,
+    { kind: "link", label: "Profile", href: "/profile", icon: <UserCog size={18} /> },
     { kind: "button", label: "Sign out", onClick: signOut, icon: <LogOut size={18} /> },
   ];
 

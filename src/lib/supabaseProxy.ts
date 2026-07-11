@@ -92,12 +92,13 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     }
     // Viewers are read-only: /view is their whole app. Everything else
     // (builder, employees, users admin, admin API) bounces back there - except
-    // the public About / Terms pages, which everyone may read.
+    // the public About / Terms pages and their own /profile, which they may open.
     if (
       role === "viewer" &&
       !isPublicPath(pathname) &&
       pathname !== "/view" &&
-      !pathname.startsWith("/view/")
+      !pathname.startsWith("/view/") &&
+      pathname !== "/profile"
     ) {
       return redirectTo("/view");
     }
