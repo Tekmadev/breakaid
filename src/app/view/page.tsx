@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, CalendarDays, Clock, LayoutGrid } from "lucide-react";
+import { RefreshCw, CalendarDays, Clock, LayoutGrid, ChevronDown, ChevronUp } from "lucide-react";
 import type { FinalizedGameplan, TaskCode } from "@/lib/types";
 import { TIME_SLOTS } from "@/lib/generator";
 import { gameplanStore } from "@/lib/gameplanStore";
@@ -77,6 +77,9 @@ export default function ViewPage() {
   const [loading, setLoading] = useState(true);
   const [myName, setMyName] = useState<string | null>(null);
   const [isManagerAcct, setIsManagerAcct] = useState(false);
+  // The wide team grid is collapsed by default: the personal timeline is the
+  // phone-first view, and the full grid is available on demand.
+  const [showFullGrid, setShowFullGrid] = useState(false);
   // Ticks every 30s so the "right now" section tracks the clock.
   const [nowIdx, setNowIdx] = useState<number>(() => currentSlotIdx());
   // True once the viewer manually picks a day from the dropdown. Until then the
@@ -165,6 +168,31 @@ export default function ViewPage() {
     return idxs;
   }, []);
 
+  const todayExists = useMemo(() => plans.some((p) => p.date === todayLabel()), [plans]);
+
+  // My day as grouped segments (consecutive identical codes merged) for the
+  // phone-first personal timeline. Spans only the display window (8:00-21:30).
+  const mySegments = useMemo(() => {
+    if (!me || !plan) return [] as { startIdx: number; endIdx: number; code: string }[];
+    const out: { startIdx: number; endIdx: number; code: string }[] = [];
+    let segStart = -1;
+    let segCode: string | null = null;
+    const flush = (endIdx: number) => {
+      if (segStart >= 0 && segCode !== null) out.push({ startIdx: segStart, endIdx, code: segCode });
+    };
+    for (let i = DISPLAY_START_IDX; i <= DISPLAY_END_IDX; i++) {
+      const active = i >= me.shiftStartIdx && i < me.shiftEndIdx;
+      const code = active ? ((plan.plan[me.name]?.[TIME_SLOTS[i]] ?? "") as string) : null;
+      if (code !== segCode) {
+        flush(i);
+        segStart = active ? i : -1;
+        segCode = code;
+      }
+    }
+    flush(DISPLAY_END_IDX + 1);
+    return out;
+  }, [me, plan]);
+
   return (
     <div className="animate-fade-in" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <AppHeader
@@ -222,6 +250,20 @@ export default function ViewPage() {
               )}
             </div>
 
+            {/* When today has no finalized plan we auto-show the most recent one;
+                say so plainly instead of passing a past day off as today. */}
+            {!isToday && !todayExists && (
+              <div
+                className="glass-panel"
+                style={{ padding: "0.75rem 1rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem", borderLeft: "4px solid var(--accent-primary)" }}
+              >
+                <Clock size={16} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                  Today&apos;s plan isn&apos;t finalized yet. Showing <strong>{selectedDate}</strong>.
+                </span>
+              </div>
+            )}
+
             {plan && (
               <>
                 {/* My assignment right now */}
@@ -263,6 +305,47 @@ export default function ViewPage() {
                         Not on the door schedule right now.
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* My day - phone-first personal timeline (grouped by task). */}
+                {me && mySegments.length > 0 && (
+                  <div className="glass-panel" style={{ padding: "1rem 1.25rem", marginBottom: "1rem" }}>
+                    <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                      <CalendarDays size={16} color="var(--accent-secondary)" /> Your day{isToday ? " today" : ""}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                      {mySegments.map((seg) => {
+                        const isNowSeg = isToday && nowIdx >= seg.startIdx && nowIdx < seg.endIdx;
+                        const c = codeColor(seg.code);
+                        const startT = TIME_SLOTS[seg.startIdx];
+                        const endT = TIME_SLOTS[Math.min(seg.endIdx, TIME_SLOTS.length - 1)];
+                        return (
+                          <div
+                            key={`${seg.startIdx}-${seg.code}`}
+                            style={{
+                              display: "flex", alignItems: "center", gap: "0.75rem",
+                              padding: "0.5rem 0.6rem", borderRadius: "var(--radius-md)",
+                              backgroundColor: isNowSeg ? "var(--bg-tertiary)" : "transparent",
+                              border: isNowSeg ? "1px solid var(--accent-secondary)" : "1px solid var(--border-color)",
+                            }}
+                          >
+                            <span style={{ fontSize: "0.8rem", fontWeight: 600, minWidth: "88px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                              {startT} - {endT}
+                            </span>
+                            <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: "2.6rem", padding: "0.15rem 0.5rem", borderRadius: "var(--radius-sm)", backgroundColor: c.bg, color: c.text, fontWeight: 800, fontSize: "0.85rem" }}>
+                              {seg.code || "-"}
+                            </span>
+                            <span style={{ fontSize: "0.85rem", fontWeight: isNowSeg ? 700 : 500 }}>
+                              {CODE_LABELS[seg.code] ?? (seg.code || "Not on the door")}
+                              {isNowSeg && (
+                                <span style={{ marginLeft: "0.4rem", fontSize: "0.72rem", color: "var(--accent-secondary)", fontWeight: 700 }}>NOW</span>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 
@@ -311,7 +394,24 @@ export default function ViewPage() {
                   </div>
                 )}
 
-                {/* Full-day table (read-only) */}
+                {/* Full team schedule: collapsed by default (the personal
+                    timeline above is the phone-first view), expandable on demand. */}
+                <button
+                  onClick={() => setShowFullGrid((s) => !s)}
+                  aria-expanded={showFullGrid}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "0.4rem",
+                    background: "none", border: "1px solid var(--border-color)",
+                    borderRadius: "var(--radius-md)", padding: "0.5rem 0.85rem",
+                    color: "var(--text-secondary)", cursor: "pointer", fontFamily: "inherit",
+                    fontSize: "0.85rem", marginBottom: "0.75rem",
+                  }}
+                >
+                  {showFullGrid ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  {showFullGrid ? "Hide full team schedule" : "Show full team schedule"}
+                </button>
+
+                {showFullGrid && (
                 <div
                   style={{
                     overflowX: "auto",
@@ -392,6 +492,7 @@ export default function ViewPage() {
                     </tbody>
                   </table>
                 </div>
+                )}
 
                 <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.75rem" }}>
                   Read-only view · finalized{" "}
