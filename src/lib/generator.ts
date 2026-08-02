@@ -22,7 +22,11 @@
  * 5. assignPush - the 30-min slot right after close: keep ≥1 at the
  *                          exit door, rest → PUSH (cart pushing).
  * 6. assignFrontEnd - open-hours Door overflow (> target) → FE; and any
- *                          on-shift staff after the push window → FE.
+ *                          on-shift staff after the push window → FE. The
+ *                          overflow goes to whoever has done the FEWEST front-end
+ *                          slots today (never simply the first in roster order,
+ *                          which is the earliest shift), and each trip lasts
+ *                          ~1 hour unless the door cannot spare them that long.
  * 7. assignDoorSides - LAST: every remaining internal "D" becomes IN
  *                          (entrance) or OUT (exit). Split per slot: even count
  *                          → 50/50; odd count → the EXTRA person goes to the
@@ -68,6 +72,10 @@ const HELP_QUIET_AT_OR_BELOW = 1;    // quiet moment with ≤1 on the door → n
 
 // PUSH cap - at most this many on cart-pushing in the post-close window.
 const MAX_PUSH = 4;
+
+// FE stint length - a front-end trip lasts ~1 hour (2 slots). It is cut short
+// only when the door cannot spare the person for the second slot.
+const FE_STINT_SLOTS = 2;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Day configuration (weekday vs weekend)
@@ -491,6 +499,31 @@ function assignPush(
 // Front End (open-hours overflow + post-push leftover)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Per-person front-end bookkeeping used while sweeping the day slot by slot. */
+type FeState = {
+  count: number;    // total FE slots this person has done today (fair share)
+  run: number;      // consecutive slots in the CURRENT front-end stint
+  lastIdx: number;  // slot index of their most recent FE assignment
+  doorRun: number;  // consecutive slots they have stood on the door
+};
+
+/**
+ * Front End - who covers the overflow, and for how long.
+ *
+ * Open hours: whenever the door holds more people than the target, the extras
+ * help at the front end. Two manager rules decide WHO goes and HOW LONG:
+ *   • Fair share - the person with the FEWEST front-end slots so far goes next.
+ *     The roster is sorted by shift start, so the old "first match in roster
+ *     order" pick sent the early shifts to the front end all day while the late
+ *     shifts never went at all.
+ *   • Whole stints - once someone is sent they stay ~1 hour. A stint is cut to
+ *     half an hour only when the door genuinely cannot spare them for the second
+ *     slot (coverage would fall under the floor) or their shift ends first.
+ *
+ * After the push window: anyone still on plain Door helps Front End.
+ *
+ * Still fully deterministic: every tie-break below is a stable ordering.
+ */
 function assignFrontEnd(
   gameplan: Gameplan,
   employees: readonly Employee[],
@@ -498,26 +531,71 @@ function assignFrontEnd(
 ): Gameplan {
   const result = cloneGameplan(gameplan);
 
+  const fe: Record<string, FeState> = Object.fromEntries(
+    employees.map((e) => [e.name, { count: 0, run: 0, lastIdx: -99, doorRun: 0 }])
+  );
+  const rosterIdx = new Map(employees.map((e, i) => [e.name, i]));
+
+  const sendToFrontEnd = (emp: Employee, tIdx: number) => {
+    result[emp.name][TIME_SLOTS[tIdx]] = "FE";
+    const s = fe[emp.name];
+    s.run = s.lastIdx === tIdx - 1 ? s.run + 1 : 1;
+    s.lastIdx = tIdx;
+    s.count++;
+  };
+
   for (let tIdx = 0; tIdx < TIME_SLOTS.length; tIdx++) {
     const time = TIME_SLOTS[tIdx];
+    const onDoor = () => employees.filter((e) => result[e.name][time] === "D");
 
     if (tIdx < cfg.closeIdx) {
-      // Open hours: trim Door overflow beyond the target down to FE.
-      const coverage = countDoorCoverage(result, employees, time);
-      if (coverage <= TARGET_DOOR_COVERAGE) continue;
-      let excess = coverage - TARGET_DOOR_COVERAGE;
-      for (const emp of employees) {
-        if (excess <= 0) break;
-        if (result[emp.name][time] === "D") {
-          result[emp.name][time] = "FE";
-          excess--;
-        }
+      let coverage = countDoorCoverage(result, employees, time);
+
+      // 1) Let unfinished stints reach their hour, unless the door needs them
+      //    back - then it stays a half-hour trip.
+      for (const emp of onDoor()) {
+        const s = fe[emp.name];
+        if (s.lastIdx !== tIdx - 1 || s.run >= FE_STINT_SLOTS) continue;
+        if (coverage - 1 < MIN_DOOR_COVERAGE) break;
+        sendToFrontEnd(emp, tIdx);
+        coverage--;
+      }
+
+      // 2) Send whoever is still over the target, fairest turn first.
+      while (coverage > TARGET_DOOR_COVERAGE) {
+        const candidates = onDoor();
+        if (candidates.length === 0) break;
+        // Free for the SECOND half of the hour too? Someone who is already due a
+        // break or a walk next slot can only manage a half-hour trip, so they go
+        // last among people with the same number of trips.
+        const nextTime = TIME_SLOTS[tIdx + 1];
+        const canFinishHour = (e: Employee) =>
+          nextTime !== undefined && result[e.name][nextTime] === "D" ? 0 : 1;
+        candidates.sort((a, b) => {
+          const sa = fe[a.name];
+          const sb = fe[b.name];
+          // Fewest trips so far; then whoever can still finish a full hour;
+          // then whoever has stood on the door longest; then roster order.
+          return (
+            sa.count - sb.count ||
+            canFinishHour(a) - canFinishHour(b) ||
+            sb.doorRun - sa.doorRun ||
+            (rosterIdx.get(a.name) ?? 0) - (rosterIdx.get(b.name) ?? 0)
+          );
+        });
+        sendToFrontEnd(candidates[0], tIdx);
+        coverage--;
       }
     } else if (tIdx > cfg.pushIdx) {
       // After the push window: anyone still on plain Door helps Front End.
-      for (const emp of employees) {
-        if (result[emp.name][time] === "D") result[emp.name][time] = "FE";
-      }
+      for (const emp of onDoor()) result[emp.name][time] = "FE";
+    }
+
+    // Roll each person's door streak forward for the next slot's tie-break.
+    for (const emp of employees) {
+      const task = result[emp.name][time];
+      const s = fe[emp.name];
+      s.doorRun = task === "D" || task === "B/D" ? s.doorRun + 1 : 0;
     }
   }
   return result;
