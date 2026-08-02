@@ -119,6 +119,7 @@ function toEmployee(name: string, cell: string): Employee | null {
     // Management page. Default sensibly until that exists.
     canWalk: true,
     canSec: false,
+    canFE: true,
     doorSide: "both",
     shiftStartIdx,
     shiftEndIdx,

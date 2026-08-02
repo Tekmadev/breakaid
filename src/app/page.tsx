@@ -111,7 +111,8 @@ const countDoorCoverageAt = (
 
 // Overlay saved capabilities + door-side onto a freshly parsed roster, so the
 // generator honours each person's persisted settings. Names with no saved
-// record keep the parser defaults (canWalk=true / canSec=false / doorSide=both).
+// record keep the parser defaults (canWalk=true / canSec=false / canFE=true /
+// doorSide=both).
 const overlayCaps = (
   roster: Employee[],
   saved: Record<string, EmployeeRecord>
@@ -123,6 +124,7 @@ const overlayCaps = (
           displayName: saved[e.name].displayName,
           canWalk: saved[e.name].canWalk,
           canSec: saved[e.name].canSec,
+          canFE: saved[e.name].canFE,
           doorSide: saved[e.name].doorSide,
         }
       : e
@@ -400,6 +402,7 @@ export default function Home() {
                     displayName: saved[e.name].displayName,
                     canWalk: saved[e.name].canWalk,
                     canSec: saved[e.name].canSec,
+                    canFE: saved[e.name].canFE,
                     doorSide: saved[e.name].doorSide,
                   }
                 : e
@@ -443,10 +446,12 @@ export default function Home() {
     setError(null);
   };
 
-  const toggleCapability = (idx: number, field: 'canWalk' | 'canSec') => {
+  const toggleCapability = (idx: number, field: 'canWalk' | 'canSec' | 'canFE') => {
     const emp = employees[idx];
     if (!emp) return;
-    const nextVal = !emp[field];
+    // canFE is optional on Employee (rosters saved before it existed lack it);
+    // absent means yes, matching the generator's canWorkFrontEnd().
+    const nextVal = field === 'canFE' ? emp.canFE === false : !emp[field];
     // Optimistic UI update - never mutate the existing employee in place.
     setEmployees((prev) => prev.map((e, i) => (i === idx ? { ...e, [field]: nextVal } : e)));
     // Persist (non-clobbering single-field upsert) so it sticks for future
@@ -547,7 +552,7 @@ export default function Home() {
       const rows = await employeeStore.list();
       const rec = rows.find((r) => r.name === helper.name);
       if (rec) {
-        h = { ...helper, displayName: rec.displayName, canWalk: rec.canWalk, canSec: rec.canSec, doorSide: rec.doorSide };
+        h = { ...helper, displayName: rec.displayName, canWalk: rec.canWalk, canSec: rec.canSec, canFE: rec.canFE, doorSide: rec.doorSide };
       } else {
         await employeeStore.upsert({
           name: helper.name,
@@ -1780,6 +1785,7 @@ export default function Home() {
                     <th style={{ padding: '0.5rem' }}>Display name</th>
                     <th style={{ padding: '0.5rem', textAlign: 'center' }}>Can Walk (W)</th>
                     <th style={{ padding: '0.5rem', textAlign: 'center' }}>Can Sec (SEC)</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'center' }}>Can FE</th>
                     <th style={{ padding: '0.5rem', textAlign: 'center' }}>Door side</th>
                   </tr>
                 </thead>
@@ -1806,6 +1812,14 @@ export default function Home() {
                       </td>
                       <td style={{ padding: '0.5rem', textAlign: 'center' }}>
                         <input type="checkbox" checked={emp.canSec} onChange={() => toggleCapability(idx, 'canSec')} />
+                      </td>
+                      <td style={{ padding: '0.5rem', textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={emp.canFE !== false}
+                          onChange={() => toggleCapability(idx, 'canFE')}
+                          title="Unchecked = never sent to the front end while the store is open"
+                        />
                       </td>
                       <td style={{ padding: '0.5rem', textAlign: 'center' }}>
                         <select

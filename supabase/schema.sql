@@ -37,6 +37,7 @@ create table if not exists public.employees (
   position     text,                          -- e.g. "086-Security", "MBR SRV"
   can_walk    boolean not null default true,
   can_sec     boolean not null default false,
+  can_fe      boolean not null default true,  -- can help at the front end
   door_side   text    not null default 'both'
               check (door_side in ('both', 'in', 'out')),
   door_excluded boolean not null default false, -- kept OFF the auto-built door team

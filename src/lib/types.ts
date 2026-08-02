@@ -85,6 +85,15 @@ export type Employee = {
   canSec: boolean;
 
   /**
+   * True if this employee can help at the Front End (FE). Optional because
+   * rosters saved before this field existed lack it - absent means YES.
+   * When false, the generator never sends them on the open-hours front-end
+   * overflow; after the store closes they go to PUSH first, and only help at
+   * the front end once the push window is over and nothing else is left.
+   */
+  canFE?: boolean;
+
+  /**
    * Door-side restriction (see {@link DoorSide}). Optional because rosters
    * saved before this field existed lack it - absent means "both".
    */
@@ -135,6 +144,13 @@ export type EmployeeRecord = {
 
   /** Authorized to perform Security (SEC) duty. */
   canSec: boolean;
+
+  /**
+   * Can help at the Front End (FE). Defaults to true: most people can, so this
+   * is a restriction a manager turns OFF for the few who cannot. See
+   * {@link Employee.canFE} for exactly what the generator does with it.
+   */
+  canFE: boolean;
 
   /** Door-side restriction - "both" unless the person can only do one side. */
   doorSide: DoorSide;

@@ -61,6 +61,9 @@ type EmployeeRow = {
   position: string | null;
   can_walk: boolean;
   can_sec: boolean;
+  // Optional: absent from the result until the `can_fe` migration runs, so reads
+  // work on both the old and new schema (see rowToRecord's `?? true`).
+  can_fe?: boolean | null;
   door_side: string | null;
   // Optional: absent from the result until the `door_excluded` migration runs,
   // so reads work on both the old and new schema (see rowToRecord's `?? false`).
@@ -78,6 +81,7 @@ const rowToRecord = (r: EmployeeRow): EmployeeRecord => ({
   position: r.position ?? undefined,
   canWalk: r.can_walk,
   canSec: r.can_sec,
+  canFE: r.can_fe ?? true,
   doorSide: toDoorSide(r.door_side),
   doorExcluded: r.door_excluded ?? false,
   lastShift: r.last_shift ?? undefined,
@@ -95,6 +99,7 @@ function patchToRow(patch: Partial<EmployeeRecord> & { name: string }): Record<s
   if ("position" in patch) row.position = patch.position ?? null;
   if ("canWalk" in patch) row.can_walk = patch.canWalk;
   if ("canSec" in patch) row.can_sec = patch.canSec;
+  if ("canFE" in patch) row.can_fe = patch.canFE ?? true;
   if ("doorSide" in patch) row.door_side = patch.doorSide ?? "both";
   if ("doorExcluded" in patch) row.door_excluded = patch.doorExcluded ?? false;
   if ("lastShift" in patch) row.last_shift = patch.lastShift ?? null;

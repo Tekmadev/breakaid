@@ -20,13 +20,19 @@
  * 4. assignWalks - one per hour to the last-walk time; 11:00 → the
  *                          11-AM starter; weekend 18:00 → guard 1; rest fair.
  * 5. assignPush - the 30-min slot right after close: keep ≥1 at the
- *                          exit door, rest → PUSH (cart pushing).
+ *                          exit door, rest → PUSH (cart pushing). People who
+ *                          cannot work the front end are pushed FIRST, since
+ *                          PUSH is the only post-close task open to them.
  * 6. assignFrontEnd - open-hours Door overflow (> target) → FE; and any
  *                          on-shift staff after the push window → FE. The
  *                          overflow goes to whoever has done the FEWEST front-end
  *                          slots today (never simply the first in roster order,
  *                          which is the earliest shift), and each trip lasts
  *                          ~1 hour unless the door cannot spare them that long.
+ *                          canFE=false excludes someone from the OPEN-HOURS
+ *                          overflow entirely; after close they push carts first
+ *                          and only help at the front end once nothing else is
+ *                          left.
  * 7. assignDoorSides - LAST: every remaining internal "D" becomes IN
  *                          (entrance) or OUT (exit). Split per slot: even count
  *                          → 50/50; odd count → the EXTRA person goes to the
@@ -131,6 +137,16 @@ function cloneGameplan(gameplan: Gameplan): Gameplan {
 
 function isActiveAt(emp: Employee, slotIdx: number): boolean {
   return slotIdx >= emp.shiftStartIdx && slotIdx < emp.shiftEndIdx;
+}
+
+/**
+ * May this person help at the Front End? Absent means yes, so rosters saved
+ * before the flag existed keep working. It blocks the open-hours overflow only:
+ * once the store has closed and the push window is over there is nothing else
+ * left to do, so the post-close sweep still applies to everyone.
+ */
+function canWorkFrontEnd(emp: Employee): boolean {
+  return emp.canFE !== false;
 }
 
 /**
@@ -482,12 +498,24 @@ function assignPush(
   // Plain-Door people present in the close slot are the movable pool.
   const onDoor = employees.filter((e) => result[e.name][time] === "D");
   if (onDoor.length === 0) return result;
-  // Keep one at the exit door - prefer someone allowed at the exit, so an
-  // entrance-only (doorSide "in") person is never made the exit attendant.
-  const keeper = onDoor.find((e) => (e.doorSide ?? "both") !== "in") ?? onDoor[0];
+
+  // Keep one at the exit door. Hard rule: never an entrance-only (doorSide
+  // "in") person. Soft preference: someone who CAN work the front end, because
+  // the keeper's next stop once the push window ends is the front end anyway -
+  // so holding back a front-end-capable person leaves the push slots for the
+  // people who have nowhere else to go.
+  const exitOk = onDoor.filter((e) => (e.doorSide ?? "both") !== "in");
+  const keeper = exitOk.find(canWorkFrontEnd) ?? exitOk[0] ?? onDoor[0];
+
+  // Everyone else pushes carts, capped at MAX_PUSH. Anyone who cannot work the
+  // front end goes FIRST: PUSH is the only post-close task open to them.
+  // (sort is stable, so equal candidates keep roster order and stay deterministic.)
+  const pushPool = onDoor
+    .filter((e) => e.name !== keeper.name)
+    .sort((a, b) => Number(canWorkFrontEnd(a)) - Number(canWorkFrontEnd(b)));
+
   let pushed = 0;
-  for (const emp of onDoor) {
-    if (emp.name === keeper.name) continue;
+  for (const emp of pushPool) {
     if (pushed >= MAX_PUSH) break;
     result[emp.name][time] = "PUSH";
     pushed++;
@@ -519,8 +547,12 @@ type FeState = {
  *   • Whole stints - once someone is sent they stay ~1 hour. A stint is cut to
  *     half an hour only when the door genuinely cannot spare them for the second
  *     slot (coverage would fall under the floor) or their shift ends first.
+ *   • Only front-end-capable people (see canWorkFrontEnd). Someone flagged
+ *     canFE=false stays on the door instead, even if that keeps it over target.
  *
- * After the push window: anyone still on plain Door helps Front End.
+ * After the push window: anyone still on plain Door helps Front End - including
+ * canFE=false people, because the door is shut and the carts are done, so there
+ * is genuinely nothing else left (manager's call).
  *
  * Still fully deterministic: every tie-break below is a stable ordering.
  */
@@ -547,13 +579,16 @@ function assignFrontEnd(
   for (let tIdx = 0; tIdx < TIME_SLOTS.length; tIdx++) {
     const time = TIME_SLOTS[tIdx];
     const onDoor = () => employees.filter((e) => result[e.name][time] === "D");
+    // Open-hours overflow only ever considers front-end-capable people; anyone
+    // else simply stays on the door, even if that leaves it above target.
+    const overflowPool = () => onDoor().filter(canWorkFrontEnd);
 
     if (tIdx < cfg.closeIdx) {
       let coverage = countDoorCoverage(result, employees, time);
 
       // 1) Let unfinished stints reach their hour, unless the door needs them
       //    back - then it stays a half-hour trip.
-      for (const emp of onDoor()) {
+      for (const emp of overflowPool()) {
         const s = fe[emp.name];
         if (s.lastIdx !== tIdx - 1 || s.run >= FE_STINT_SLOTS) continue;
         if (coverage - 1 < MIN_DOOR_COVERAGE) break;
@@ -563,7 +598,7 @@ function assignFrontEnd(
 
       // 2) Send whoever is still over the target, fairest turn first.
       while (coverage > TARGET_DOOR_COVERAGE) {
-        const candidates = onDoor();
+        const candidates = overflowPool();
         if (candidates.length === 0) break;
         // Free for the SECOND half of the hour too? Someone who is already due a
         // break or a walk next slot can only manage a half-hour trip, so they go

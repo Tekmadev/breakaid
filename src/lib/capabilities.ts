@@ -23,6 +23,7 @@ function normalize(name: string, raw: unknown): EmployeeRecord {
     position: v.position,
     canWalk: v.canWalk ?? true,
     canSec: v.canSec ?? false,
+    canFE: v.canFE ?? true,
     doorSide: v.doorSide ?? "both",
     doorExcluded: v.doorExcluded ?? false,
     lastShift: v.lastShift,

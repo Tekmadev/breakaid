@@ -70,6 +70,23 @@ export default function EmployeesPage() {
     [upsertLocal]
   );
 
+  // "Can FE" toggle. Unchecking keeps the person off the open-hours front-end
+  // overflow entirely; after closing they push carts first and only help at the
+  // front end once the push window is over.
+  const handleFrontEnd = useCallback(
+    async (rec: EmployeeRecord) => {
+      try {
+        const saved = await employeeStore.upsert({ name: rec.name, canFE: !rec.canFE });
+        upsertLocal(saved);
+      } catch {
+        // Persisting this needs the `can_fe` column (migration-mvp.sql). Until it
+        // exists on the live database the toggle is a no-op rather than an
+        // unhandled error.
+      }
+    },
+    [upsertLocal]
+  );
+
   const handleDoorSide = useCallback(
     async (rec: EmployeeRecord, side: DoorSide) => {
       const saved = await employeeStore.upsert({ name: rec.name, doorSide: side });
@@ -189,8 +206,11 @@ export default function EmployeesPage() {
           <p style={{ color: "var(--text-secondary)", marginBottom: "1.25rem", fontSize: "0.9rem" }}>
             Set each person&apos;s <strong>display name</strong> (the friendlier label shown on the
             gameplan; leave it blank to use their schedule name), who can <strong>Walk (W)</strong>,
-            who can do <strong>Security (SEC)</strong>, and any <strong>door-side restriction</strong>{" "}
-            (e.g. entrance-only for medical reasons) once here. Uncheck <strong>On door team</strong> for
+            who can do <strong>Security (SEC)</strong>, who can help at the{" "}
+            <strong>Front End (FE)</strong>, and any <strong>door-side restriction</strong>{" "}
+            (e.g. entrance-only for medical reasons) once here. Unchecking <strong>Can FE</strong> keeps
+            someone off the front end while the store is open; after closing they push carts first and
+            only help at the front end if nothing else is left. Uncheck <strong>On door team</strong> for
             anyone still listed under Security in the file who no longer works the door, so the generator
             skips them. The generator reads these every time you build a gameplan, so you never re-set them
             per upload. People appear here automatically after you open a day in the builder, or add them
@@ -314,6 +334,7 @@ export default function EmployeesPage() {
                       <th style={thStyle}>Last shift</th>
                       <th style={{ ...thStyle, textAlign: "center" }}>Can Walk (W)</th>
                       <th style={{ ...thStyle, textAlign: "center" }}>Can Sec (SEC)</th>
+                      <th style={{ ...thStyle, textAlign: "center" }}>Can FE</th>
                       <th style={{ ...thStyle, textAlign: "center" }}>Door side</th>
                       <th style={{ ...thStyle, textAlign: "center" }}>On door team</th>
                       <th style={thStyle}>Updated</th>
@@ -361,6 +382,19 @@ export default function EmployeesPage() {
                             checked={rec.canSec}
                             onChange={() => handleToggle(rec, "canSec")}
                             aria-label={`${rec.name} can do security`}
+                          />
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={rec.canFE}
+                            onChange={() => handleFrontEnd(rec)}
+                            aria-label={`${rec.name} can help at the front end`}
+                            title={
+                              rec.canFE
+                                ? "Can help at the front end"
+                                : "Never sent to the front end while the store is open"
+                            }
                           />
                         </td>
                         <td style={{ ...tdStyle, textAlign: "center" }}>

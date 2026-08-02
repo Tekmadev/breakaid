@@ -22,6 +22,12 @@ alter table public.employees
 alter table public.employees
   add column if not exists door_excluded boolean not null default false;
 
+-- ── 1d) Front-end capability. Most people can help at the front end, so this
+-- defaults to true and a manager turns it OFF for the few who cannot. The
+-- generator then never sends them on the open-hours front-end overflow.
+alter table public.employees
+  add column if not exists can_fe boolean not null default true;
+
 -- ── 2) Roles ─────────────────────────────────────────────────────────────────
 -- Roles live in each account's app_metadata (inside the JWT). Only the admin
 -- API (service_role) can write app_metadata - users cannot change their own.
