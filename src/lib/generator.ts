@@ -72,6 +72,13 @@ export const TIME_SLOTS: readonly string[] = [
 // Named slot indices used throughout the rules (all relative to TIME_SLOTS).
 const IDX_730AM = 1;     // "7:30" - the opener's first break; the 7:30 arrival takes the EXIT
 const IDX_8AM  = 2;      // "8:00" - the opener's walk, and the first walk of the day
+const IDX_830AM = 3;     // "8:30" - entrance-heavy: the store is about to open
+
+// At 8:30 the traffic is people coming IN, not leaving: the store opens at 9:00
+// and the team sometimes opens it ~15 minutes early, while nobody has been
+// inside long enough to be on their way out. So the ENTRANCE needs this many,
+// overriding the usual "odd one out goes to the exit" split for that slot only.
+const ENTRANCE_MIN_AT_OPENING = 2;
 const IDX_11AM = 8;      // "11:00" - the special "fresh arrival" walk hour
 const IDX_6PM  = 22;     // "18:00" - weekend guard-1 usually takes this walk
 
@@ -715,6 +722,8 @@ const STINT_SLOTS = 2;
  *
  * Per-slot split (manager's rule): exit gets the extra when odd.
  *   4 → 2 IN / 2 OUT · 3 → 1 IN / 2 OUT · 2 → 1 / 1 · 1 → OUT.
+ * EXCEPT at 8:30, where the entrance gets the extra instead (3 → 2 IN / 1 OUT):
+ * the store is about to open and the traffic is all arrivals.
  * After the entry closes, everyone left on the door is OUT (exit only).
  *
  * Per-person rotation (fairness-first): stay on a side for ~1 hour, then swap;
@@ -765,7 +774,14 @@ function assignDoorSides(
     for (const emp of forcedOut) commit(emp, tIdx, "OUT");
 
     // Quotas on the whole door group: IN = floor(n/2), the extra goes OUT.
-    const inQuota = Math.floor(onDoor.length / 2);
+    // Exception at 8:30 (see ENTRANCE_MIN_AT_OPENING): everyone is arriving, so
+    // the entrance takes the extra instead. Raises IN to 2 where the group is
+    // big enough, and never lowers it when the usual split already wants more.
+    const baseInQuota = Math.floor(onDoor.length / 2);
+    const inQuota =
+      tIdx === IDX_830AM
+        ? Math.max(baseInQuota, Math.min(ENTRANCE_MIN_AT_OPENING, onDoor.length))
+        : baseInQuota;
     let inLeft = Math.min(Math.max(0, inQuota - forcedIn.length), flexible.length);
     let outLeft = flexible.length - inLeft;
 
