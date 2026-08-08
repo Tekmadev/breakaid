@@ -83,9 +83,16 @@ const FIRST_WALK_IDX = IDX_8AM;
 const MIN_DOOR_COVERAGE = 3;     // floor (breaks may still override it)
 const TARGET_DOOR_COVERAGE = 4;  // ideal; overflow beyond this goes to FE
 
-// FE HELP (understaffing) thresholds - see computeHelpRow.
-const HELP_BUSY_AT_OR_BELOW = 2;     // busy moment with ≤2 on the door → needs help
-const HELP_QUIET_AT_OR_BELOW = 1;    // quiet moment with ≤1 on the door → needs help
+// FE HELP (understaffing) - see computeHelpRow.
+const HELP_AT_OR_BELOW = 2;          // ≤2 on the door during trading hours → needs help
+
+// The warehouse opens to members at 9:00 EVERY day (TIME_SLOTS idx 4). Closing
+// is per-day and lives in DayConfig (weekday 8:30 PM, weekend 7:00 PM).
+const IDX_9AM = 4;
+// Nobody rushes the door the moment it opens, so the alert only starts an hour
+// after opening. Before that the store is shut or still quiet, and a thin door
+// is expected rather than a problem.
+const HELP_START_IDX = IDX_9AM + 2;  // 10:00
 
 // PUSH cap - at most this many on cart-pushing in the post-close window.
 const MAX_PUSH = 4;
@@ -817,12 +824,17 @@ function assignDoorSides(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Per-slot understaffing flag for the far-right "FE HELP" column. A slot needs
- * help when the door is too thin for how busy it is:
- *   • busy moment  → ≤ 2 on the door
- *   • quiet moment → ≤ 1 on the door
- * "Busy" = open hours, minus the last hour before close on weekdays; weekends
- * are busy throughout. Closed slots (and slots with nobody on shift) never flag.
+ * Per-slot understaffing flag for the far-right "FE HELP" column: a slot needs
+ * help when the door is down to 2 people or fewer.
+ *
+ * It only applies during TRADING hours, from an hour after opening (10:00) up
+ * to closing. Outside that it never flags:
+ *   • Before 10:00 the store is either shut or has just opened, so a thin door
+ *     is normal, not a problem. The alert used to start at 7:00 and lit up the
+ *     whole early morning.
+ *   • At closing the entrance shuts. Only the exit still needs someone, and
+ *     assignPush already guarantees that keeper, so there is nothing to flag.
+ * Slots with nobody on shift never flag either.
  */
 export function computeHelpRow(
   gameplan: Gameplan,
@@ -835,15 +847,13 @@ export function computeHelpRow(
   for (let tIdx = 0; tIdx < TIME_SLOTS.length; tIdx++) {
     const time = TIME_SLOTS[tIdx];
     help[time] = false;
-    if (tIdx >= cfg.closeIdx) continue; // closed - no door-help expectation
+    if (tIdx < HELP_START_IDX) continue;  // shut, or only just opened
+    if (tIdx >= cfg.closeIdx) continue;   // entrance closed
 
     const anyoneActive = employees.some((e) => isActiveAt(e, tIdx));
     if (!anyoneActive) continue;
 
-    const coverage = countDoorCoverage(gameplan, employees, time);
-    // Weekday: the last hour before close (two slots) is the quiet stretch.
-    const busy = cfg.weekend ? true : tIdx < cfg.closeIdx - 2;
-    if (busy ? coverage <= HELP_BUSY_AT_OR_BELOW : coverage <= HELP_QUIET_AT_OR_BELOW) {
+    if (countDoorCoverage(gameplan, employees, time) <= HELP_AT_OR_BELOW) {
       help[time] = true;
     }
   }
