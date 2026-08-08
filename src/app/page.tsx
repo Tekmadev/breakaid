@@ -43,9 +43,11 @@ const TASK_OPTIONS: { code: TaskCode; label: string }[] = [
   { code: 'FE HELP', label: 'FE HELP' },
 ];
 
-// The on-screen grid starts at 8:00 (TIME_SLOTS idx 2), matching the paper
-// form. The 7 AM walk exists but is understood - it is not displayed.
-const DISPLAY_START_IDX = 2;
+// The on-screen grid starts at 7:00 (TIME_SLOTS idx 0), matching the paper
+// form. It used to start at 8:00, but the opening shift now begins at 5 AM, so
+// 7:00 and 7:30 have to be visible: that is where the opener's first break and
+// the handover of the exit door to the 7:30 arrival happen.
+const DISPLAY_START_IDX = 0;
 
 // TEMP - reason chips (multi-select) mapping label → CorrectionReason.
 const REASON_OPTIONS: { value: CorrectionReason; label: string }[] = [

@@ -21,8 +21,8 @@ import AppFooter from "@/components/AppFooter";
  * current assignment and highlights their column.
  */
 
-// Same fixed window as the printed form: 8:00 (idx 2) → 21:30 (idx 29).
-const DISPLAY_START_IDX = 2;
+// Same fixed window as the printed form: 7:00 (idx 0) → 21:30 (idx 29).
+const DISPLAY_START_IDX = 0;
 const DISPLAY_END_IDX = 29;
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

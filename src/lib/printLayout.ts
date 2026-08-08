@@ -5,9 +5,14 @@
  * sheet, so their layout facts live in one place.
  */
 
-// TIME_SLOTS index 2 = "8:00", index 29 = "21:30" (inclusive) - the paper's
-// fixed window. 28 time rows.
-export const PRINT_START_IDX = 2;
+// TIME_SLOTS index 0 = "7:00", index 29 = "21:30" (inclusive) - the printed
+// window. 30 time rows.
+//
+// This used to start at 8:00: the early hours were understood and left off the
+// sheet. The opening shift now starts at 5 AM, and 7:00/7:30 carry real
+// instructions (the opener's first break, and the 7:30 arrival taking the exit
+// door), so they are printed.
+export const PRINT_START_IDX = 0;
 export const PRINT_END_IDX = 29;
 
 // Pad employee columns out to this many so a small roster still fills the

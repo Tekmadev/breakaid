@@ -17,8 +17,11 @@
  * 3. assignBreaks - ≥6h → two 30-min breaks; <6h → one 15-min B/D.
  *                          MANDATORY: breaks override the coverage floor.
  *                          A security guard's last break sits right before SEC.
- * 4. assignWalks - one per hour to the last-walk time; 11:00 → the
- *                          11-AM starter; weekend 18:00 → guard 1; rest fair.
+ *                          The OPENER's first break is pinned to 7:30.
+ * 4. assignWalks - one per hour from 8:00 to the last-walk time (there
+ *                          is no 7:00 walk); 8:00 → the opener, straight off
+ *                          their 7:30 break; 11:00 → the 11-AM starter;
+ *                          weekend 18:00 → guard 1; rest fair.
  * 5. assignPush - the 30-min slot right after close: keep ≥1 at the
  *                          exit door, rest → PUSH (cart pushing). People who
  *                          cannot work the front end are pushed FIRST, since
@@ -42,7 +45,9 @@
  *                          (walk/break/FE) the person returns to whichever side
  *                          rebalances their own IN/OUT totals - so nobody can
  *                          camp on their preferred side. doorSide restrictions
- *                          ("in"-only / "out"-only) are always honoured.
+ *                          ("in"-only / "out"-only) are always honoured, and
+ *                          the 7:30 arrival always opens on OUT, covering the
+ *                          exit while the opener takes their 7:30 break.
  *
  * Determinism: same inputs produce the same plan. Walk tie-breaks use a stable
  * order (fewest walks → roster order), so there is no randomness.
@@ -65,8 +70,14 @@ export const TIME_SLOTS: readonly string[] = [
 ];
 
 // Named slot indices used throughout the rules (all relative to TIME_SLOTS).
+const IDX_730AM = 1;     // "7:30" - the opener's first break; the 7:30 arrival takes the EXIT
+const IDX_8AM  = 2;      // "8:00" - the opener's walk, and the first walk of the day
 const IDX_11AM = 8;      // "11:00" - the special "fresh arrival" walk hour
 const IDX_6PM  = 22;     // "18:00" - weekend guard-1 usually takes this walk
+
+// The day's first walk. There is deliberately no 7:00 walk: the opening shift
+// starts at 5 AM and that person breaks at 7:30 then walks at 8:00 instead.
+const FIRST_WALK_IDX = IDX_8AM;
 
 // Door coverage policy.
 const MIN_DOOR_COVERAGE = 3;     // floor (breaks may still override it)
@@ -137,6 +148,21 @@ function cloneGameplan(gameplan: Gameplan): Gameplan {
 
 function isActiveAt(emp: Employee, slotIdx: number): boolean {
   return slotIdx >= emp.shiftStartIdx && slotIdx < emp.shiftEndIdx;
+}
+
+/**
+ * The opener: whoever is already on the door at 7:00, earliest start first.
+ * The opening shift currently begins at 5 AM (a negative shiftStartIdx, which
+ * the parser allows), but any shift starting at or before 7:00 counts, so this
+ * keeps working if the opening time moves. Null on a day with no early shift,
+ * in which case the opener rules simply do not fire.
+ */
+function identifyOpener(employees: readonly Employee[]): Employee | null {
+  return employees.reduce<Employee | null>(
+    (best, e) =>
+      e.shiftStartIdx <= 0 && (best === null || e.shiftStartIdx < best.shiftStartIdx) ? e : best,
+    null
+  );
 }
 
 /**
@@ -355,31 +381,40 @@ function assignBreaksFor(
   gameplan: Gameplan,
   employees: readonly Employee[],
   emp: Employee,
-  pinnedSecondBreakIdx: number | null
+  pinnedSecondBreakIdx: number | null,
+  pinnedFirstBreakIdx: number | null
 ): Gameplan {
   const result = cloneGameplan(gameplan);
   const span = emp.shiftEndIdx - emp.shiftStartIdx;
+
+  /** Take exactly this slot when it is still plain Door, else the nearest fit. */
+  const pinAt = (idx: number, avoid: number): number => {
+    const t = TIME_SLOTS[idx];
+    if (t !== undefined && result[emp.name][t] === "D") {
+      result[emp.name][t] = "B";
+      return idx;
+    }
+    return placeBreak(result, employees, emp, idx, avoid, "B");
+  };
 
   if (emp.shiftLengthHours >= 6) {
     // For a guard, place the pinned 2nd break (right before security) FIRST so
     // the first break can bisect the remaining pre-security stretch.
     let pinnedSlot = -1;
-    if (pinnedSecondBreakIdx !== null) {
-      const t = TIME_SLOTS[pinnedSecondBreakIdx];
-      if (t !== undefined && result[emp.name][t] === "D") {
-        result[emp.name][t] = "B";
-        pinnedSlot = pinnedSecondBreakIdx;
-      } else {
-        pinnedSlot = placeBreak(result, employees, emp, pinnedSecondBreakIdx, -1, "B");
-      }
-    }
+    if (pinnedSecondBreakIdx !== null) pinnedSlot = pinAt(pinnedSecondBreakIdx, -1);
 
-    // Break 1 - bisect the pre-security stretch when pinned, else ~0.28 (a bit
-    // earlier than 1/3 for spacing).
-    const target1 = pinnedSlot !== -1
-      ? Math.round((Math.max(0, emp.shiftStartIdx) + pinnedSlot) / 2)
-      : Math.round(emp.shiftStartIdx + span * 0.28);
-    const slot1 = placeBreak(result, employees, emp, target1, pinnedSlot, "B");
+    // Break 1 - pinned for the opener (7:30, so they are back for the 8:00
+    // walk); otherwise bisect the pre-security stretch when the 2nd break is
+    // pinned, else ~0.28 (a bit earlier than 1/3 for spacing).
+    let slot1: number;
+    if (pinnedFirstBreakIdx !== null) {
+      slot1 = pinAt(pinnedFirstBreakIdx, pinnedSlot);
+    } else {
+      const target1 = pinnedSlot !== -1
+        ? Math.round((Math.max(0, emp.shiftStartIdx) + pinnedSlot) / 2)
+        : Math.round(emp.shiftStartIdx + span * 0.28);
+      slot1 = placeBreak(result, employees, emp, target1, pinnedSlot, "B");
+    }
 
     // Break 2 for non-guards - near 2/3 (the guard's 2nd break is the pin above).
     if (pinnedSecondBreakIdx === null) {
@@ -398,16 +433,21 @@ function assignBreaksFor(
 function assignBreaks(
   gameplan: Gameplan,
   employees: readonly Employee[],
-  guards: Guards
+  guards: Guards,
+  opener: Employee | null
 ): Gameplan {
   let result = cloneGameplan(gameplan);
   for (const emp of employees) {
     // The late/weekday guard takes their 2nd break right before SEC begins.
-    let pinned: number | null = null;
+    let pinnedSecond: number | null = null;
     if (guards.late && emp.name === guards.late.name) {
-      pinned = guards.lateSecStartIdx - 1;
+      pinnedSecond = guards.lateSecStartIdx - 1;
     }
-    result = assignBreaksFor(result, employees, emp, pinned);
+    // The opener started at 5 AM, so their first break lands at 7:30 - which is
+    // also what frees the exit door for the 7:30 arrival, and puts them back on
+    // the floor in time for the 8:00 walk.
+    const pinnedFirst = opener && emp.name === opener.name ? IDX_730AM : null;
+    result = assignBreaksFor(result, employees, emp, pinnedSecond, pinnedFirst);
   }
   return result;
 }
@@ -420,7 +460,8 @@ function assignWalks(
   gameplan: Gameplan,
   employees: readonly Employee[],
   cfg: DayConfig,
-  guards: Guards
+  guards: Guards,
+  opener: Employee | null
 ): Gameplan {
   const result = cloneGameplan(gameplan);
   const walkCounts: Record<string, number> = Object.fromEntries(
@@ -434,9 +475,19 @@ function assignWalks(
     [guards.early?.name, guards.late?.name].filter((n): n is string => Boolean(n))
   );
 
-  for (let tIdx = 0; tIdx <= cfg.lastWalkIdx && tIdx < TIME_SLOTS.length; tIdx++) {
+  for (let tIdx = FIRST_WALK_IDX; tIdx <= cfg.lastWalkIdx && tIdx < TIME_SLOTS.length; tIdx++) {
     const time = TIME_SLOTS[tIdx];
     if (!time.endsWith(":00")) continue; // walks only at the top of the hour
+
+    // Special 0 - the 8 AM walk belongs to the opener, straight off their 7:30
+    // break. They have been on the door since 5 AM, so it is theirs by right.
+    if (tIdx === IDX_8AM && opener) {
+      if (opener.canWalk && isFreeDoor(opener, time)) {
+        result[opener.name][time] = "W";
+        walkCounts[opener.name]++;
+        continue;
+      }
+    }
 
     // Special 1 - the 11 AM walk goes to whoever's shift starts at 11.
     if (tIdx === IDX_11AM) {
@@ -732,6 +783,13 @@ function assignDoorSides(
           s.in < s.out ? "IN" : s.in > s.out ? "OUT" : s.last ? opposite(s.last) : "OUT";
         strength = 1;
       }
+      // The 7:30 arrival is covering the EXIT for the opener, who goes on their
+      // first break at exactly 7:30. So their very first door slot is always
+      // OUT, never IN - top priority, so they claim it before anyone else.
+      if (emp.shiftStartIdx === IDX_730AM && s.last === null) {
+        desired = "OUT";
+        strength = 4;
+      }
       const imbalance = Math.abs(s.in - s.out);
       return { emp, desired, strength, imbalance, rosterIdx };
     });
@@ -810,11 +868,12 @@ export function generateGameplan(
   const weekend = isWeekend ?? detectIsWeekend(employees);
   const cfg = dayConfig(weekend);
   const guards = identifyGuards(employees, cfg);
+  const opener = identifyOpener(employees);
 
   const withDoor     = initializeWithDoor(employees);
   const withSecurity = assignSecurity(withDoor, guards);
-  const withBreaks   = assignBreaks(withSecurity, employees, guards);
-  const withWalks    = assignWalks(withBreaks, employees, cfg, guards);
+  const withBreaks   = assignBreaks(withSecurity, employees, guards, opener);
+  const withWalks    = assignWalks(withBreaks, employees, cfg, guards, opener);
   const withPush     = assignPush(withWalks, employees, cfg);
   const withFrontEnd = assignFrontEnd(withPush, employees, cfg);
   const withSides    = assignDoorSides(withFrontEnd, employees, cfg);

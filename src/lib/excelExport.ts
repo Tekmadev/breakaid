@@ -92,12 +92,13 @@ export async function exportGameplanXlsx(
   }
   ws.getRow(SEP_ROW).height = 5;
 
-  // Time rows 8:00 → 21:30. Row height is tuned so the 28 rows + header fill an
-  // A4 page (fit-to-page keeps it to exactly one sheet).
+  // Time rows 7:00 → 21:30. Row height is tuned so the 30 rows + header fill an
+  // A4 page (fit-to-page keeps it to exactly one sheet). Two more rows than
+  // before, so each is proportionally shorter: 24 × 28/30 ≈ 22.
   for (let i = PRINT_START_IDX; i <= PRINT_END_IDX; i++) {
     const rowIdx = FIRST_TIME_ROW + (i - PRINT_START_IDX);
     const row = ws.getRow(rowIdx);
-    row.height = 24;
+    row.height = 22;
 
     const timeCell = row.getCell(1);
     timeCell.value = TIME_SLOTS[i];

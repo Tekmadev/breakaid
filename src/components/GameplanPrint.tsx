@@ -31,10 +31,11 @@ const MIN_COLS = PRINT_MIN_COLS;
 const GREY = PRINT_GREY;
 const BORDER = "1px solid #000";
 
-// Time-row height, tuned so the 28 rows (8:00→21:30) plus the header rows fill
+// Time-row height, tuned so the 30 rows (7:00→21:30) plus the header rows fill
 // an A4 portrait page (≈28.1cm usable inside the 8mm print margin) instead of
 // leaving the lower third blank - while keeping that margin untouched.
-const TIME_ROW_H = "0.86cm";
+// 28 rows × 0.86cm = the old fill; 30 rows need 24.08/30 ≈ 0.80cm for the same.
+const TIME_ROW_H = "0.80cm";
 
 export default function GameplanPrint({
   date,
