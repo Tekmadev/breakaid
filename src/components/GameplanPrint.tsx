@@ -1,6 +1,6 @@
 import React from "react";
 import type { Employee, Gameplan } from "@/lib/types";
-import { TIME_SLOTS } from "@/lib/generator";
+import { TIME_SLOTS, computeHelpRow } from "@/lib/generator";
 import {
   PRINT_START_IDX,
   PRINT_END_IDX,
@@ -20,6 +20,11 @@ import { displayFor } from "@/lib/displayName";
  * Hidden on screen and shown only when printing (see #gameplan-print rules in
  * globals.css). The fixed 8:00–21:30 range matches the paper exactly - security
  * or PUSH past 21:30 is intentionally not shown.
+ *
+ * The far-RIGHT column is the understaffing alert: it prints "FE HELP" on any
+ * row where the door is too thin for how busy that moment is (see
+ * computeHelpRow), so whoever is holding the sheet can see at a glance which
+ * half-hours need a hand at the door.
  */
 
 const MIN_COLS = PRINT_MIN_COLS;
@@ -35,16 +40,22 @@ export default function GameplanPrint({
   date,
   roster,
   plan,
+  isWeekend = false,
 }: {
   date: string;
   roster: Employee[];
   plan: Gameplan;
+  /** Weekend ruleset - decides which hours count as "busy" for the help column. */
+  isWeekend?: boolean;
 }) {
   const rowIdxs: number[] = [];
   for (let i = PRINT_START_IDX; i <= PRINT_END_IDX; i++) rowIdxs.push(i);
 
   const padCount = Math.max(0, MIN_COLS - roster.length);
   const pad = Array.from({ length: padCount });
+
+  // Per-slot understaffing flags for the far-right column.
+  const help = computeHelpRow(plan, roster, isWeekend);
 
   const cell: React.CSSProperties = {
     border: BORDER,
@@ -55,6 +66,7 @@ export default function GameplanPrint({
     overflow: "hidden",
   };
   const labelCell: React.CSSProperties = { ...cell, fontWeight: 600, width: "1.6cm" };
+  const helpCell: React.CSSProperties = { ...cell, width: "1.7cm" };
 
   return (
     <div id="gameplan-print">
@@ -84,6 +96,7 @@ export default function GameplanPrint({
             {pad.map((_, i) => (
               <td key={`np-${i}`} style={cell} />
             ))}
+            <td style={{ ...helpCell, fontWeight: 600, fontSize: "7.5pt" }}>Need help?</td>
           </tr>
 
           {/* Shift row */}
@@ -97,6 +110,7 @@ export default function GameplanPrint({
             {pad.map((_, i) => (
               <td key={`sp-${i}`} style={cell} />
             ))}
+            <td style={helpCell} />
           </tr>
 
           {/* Grey separator row */}
@@ -108,6 +122,7 @@ export default function GameplanPrint({
             {pad.map((_, i) => (
               <td key={`gp-${i}`} style={{ ...cell, background: GREY, height: "0.18cm", padding: 0 }} />
             ))}
+            <td style={{ ...helpCell, background: GREY, height: "0.18cm", padding: 0 }} />
           </tr>
 
           {/* Time rows 8:00 → 21:30 */}
@@ -138,6 +153,19 @@ export default function GameplanPrint({
                 {pad.map((_, p) => (
                   <td key={`p-${p}-${time}`} style={{ ...cell, height: TIME_ROW_H }} />
                 ))}
+                <td
+                  style={{
+                    ...helpCell,
+                    height: TIME_ROW_H,
+                    fontWeight: 700,
+                    fontSize: "7.5pt",
+                    // Grey fill so the alert still reads on a black-and-white
+                    // photocopy, where a colour would vanish.
+                    background: help[time] ? GREY : "#fff",
+                  }}
+                >
+                  {help[time] ? "FE HELP" : ""}
+                </td>
               </tr>
             );
           })}

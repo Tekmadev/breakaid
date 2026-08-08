@@ -6,7 +6,7 @@ import { Upload, Download, RefreshCw, AlertCircle, Settings, Play, X, FlaskConic
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- TASK_CYCLE kept for reference; the popover editor below replaces click-to-cycle.
 import { type DoorSide, type Employee, type EmployeeRecord, type FinalizedGameplan, type Gameplan, type TaskCode, TASK_CYCLE } from '@/lib/types';
 import { generateGameplan, computeHelpRow, TIME_SLOTS } from '@/lib/generator';
-import { parseScheduleRows, type ScheduleParseResult } from '@/lib/parser';
+import { parseScheduleRows, buildTemporaryEmployee, type ScheduleParseResult } from '@/lib/parser';
 import { employeeStore } from '@/lib/employeeStore';
 import { gameplanStore } from '@/lib/gameplanStore';
 import { exportGameplanXlsx } from '@/lib/excelExport';
@@ -180,6 +180,11 @@ export default function Home() {
   // person, or remove someone who no longer works the door).
   const [showAddHelper, setShowAddHelper] = useState(false);
   const [helperSearch, setHelperSearch] = useState('');
+  // "Not in the file" one-off person: name + start/end, this day's plan only.
+  const [tempName, setTempName] = useState('');
+  const [tempStart, setTempStart] = useState('');
+  const [tempEnd, setTempEnd] = useState('');
+  const [tempError, setTempError] = useState<string | null>(null);
   // A removal awaiting the "just this schedule vs permanently" choice.
   const [pendingRemoval, setPendingRemoval] = useState<Employee | null>(null);
   // True once the roster changes (staff added/removed) after a plan was built.
@@ -573,6 +578,32 @@ export default function Home() {
     setHelperSearch('');
   };
 
+  // Add a person the schedule file does not list (a walk-in helper): just a
+  // name and their hours. Deliberately NOT written to the employee roster -
+  // they exist for this day's plan only, and disappear when the day is reopened
+  // from the file. Like any roster change, this voids the generated plan.
+  const handleAddTemporary = () => {
+    if (!dayEditable) return;
+    const emp = buildTemporaryEmployee(tempName, tempStart, tempEnd);
+    if (!emp) {
+      setTempError('Enter a name, a start time and an end time.');
+      return;
+    }
+    if (employees.some((e) => e.name.toLowerCase() === emp.name.toLowerCase())) {
+      setTempError(`${emp.name} is already on the door.`);
+      return;
+    }
+    setEmployees((prev) => [...prev, emp].sort(rosterSort));
+    if (isGenerated) {
+      voidGeneratedPlan();
+      setRosterDirty(true);
+    }
+    setTempName('');
+    setTempStart('');
+    setTempEnd('');
+    setTempError(null);
+  };
+
   // Take someone off this day's door team. `permanent` also flags them
   // "off the door" in their saved record, so every future upload skips them
   // (until re-enabled on the Employees page); otherwise it affects only this
@@ -585,7 +616,9 @@ export default function Home() {
       setRosterDirty(true);
     }
     setPendingRemoval(null);
-    if (permanent) {
+    // A hand-added person has no saved record to flag, and creating one would
+    // defeat the point of a temporary add.
+    if (permanent && !emp.temporary) {
       try {
         await employeeStore.upsert({ name: emp.name, doorExcluded: true });
       } catch {
@@ -1859,9 +1892,9 @@ export default function Home() {
         // the reserve pool PLUS any door member who was removed (so a swap can be
         // undone). The parser guarantees these two lists never overlap.
         const scheduledToday = [...day.employees, ...day.additional];
-        const candidates = scheduledToday
-          .filter((e) => !inRoster.has(e.name))
-          .filter((e) => !q || e.name.toLowerCase().includes(q));
+        // Everyone the file lists for this day who is not currently on the door.
+        const available = scheduledToday.filter((e) => !inRoster.has(e.name));
+        const candidates = available.filter((e) => !q || e.name.toLowerCase().includes(q));
         return (
           <div
             onClick={(e) => { if (e.target === e.currentTarget) setShowAddHelper(false); }}
@@ -1896,7 +1929,14 @@ export default function Home() {
                   {employees.map((e) => (
                     <div key={e.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '0.5rem 0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-tertiary)' }}>
                       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                        <span style={{ fontWeight: 600 }}>{displayFor(e)}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span style={{ fontWeight: 600 }}>{displayFor(e)}</span>
+                          {e.temporary && (
+                            <span style={{ fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.03em', padding: '0.1rem 0.35rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--accent-secondary)', color: 'var(--accent-secondary)' }}>
+                              TEMPORARY
+                            </span>
+                          )}
+                        </span>
                         <span style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>shift {e.shift}</span>
                       </span>
                       <button
@@ -1912,9 +1952,10 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Add someone scheduled today (reserve pool + anyone removed). */}
+              {/* Everyone the schedule file lists for this day: the reserve pool
+                  PLUS any door member who was removed (so a swap can be undone). */}
               <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                Add someone scheduled today
+                Add someone from the schedule file ({available.length})
               </div>
               {scheduledToday.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '0.25rem 0' }}>
@@ -1935,7 +1976,11 @@ export default function Home() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '300px', overflowY: 'auto' }}>
                     {candidates.length === 0 ? (
                       <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '0.5rem 0' }}>
-                        {q ? 'No matches.' : 'Everyone scheduled today is already on the door.'}
+                        {q
+                          ? 'No matches.'
+                          : file
+                            ? 'Everyone the schedule file lists for this day is already on the door. If someone is missing, add them below.'
+                            : 'This day was opened from a saved plan, so the rest of the schedule file is not loaded. Upload the week’s file to pick from it, or add someone below.'}
                       </p>
                     ) : (
                       candidates.map((e) => (
@@ -1957,6 +2002,57 @@ export default function Home() {
                   </div>
                 </>
               )}
+
+              {/* Not in the file at all: a one-off person for this day's plan.
+                  Never saved to the employee roster - just a name and hours. */}
+              <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '1.25rem', paddingTop: '1.1rem' }}>
+                <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                  Not in the file? Add them for this day only
+                </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginBottom: '0.65rem' }}>
+                  Temporary: they go on this day&apos;s gameplan and nowhere else. They are not saved to the Employees list.
+                </p>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: '1 1 150px', minWidth: 0 }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Name</span>
+                    <input
+                      type="text"
+                      value={tempName}
+                      onChange={(e) => { setTempName(e.target.value); setTempError(null); }}
+                      placeholder="Name"
+                      style={{ width: '100%', padding: '0.5rem 0.6rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'inherit', fontSize: '0.88rem' }}
+                    />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Starts</span>
+                    <input
+                      type="time"
+                      value={tempStart}
+                      onChange={(e) => { setTempStart(e.target.value); setTempError(null); }}
+                      style={{ padding: '0.5rem 0.6rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'inherit', fontSize: '0.88rem' }}
+                    />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Ends</span>
+                    <input
+                      type="time"
+                      value={tempEnd}
+                      onChange={(e) => { setTempEnd(e.target.value); setTempError(null); }}
+                      style={{ padding: '0.5rem 0.6rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'inherit', fontSize: '0.88rem' }}
+                    />
+                  </label>
+                  <button
+                    onClick={handleAddTemporary}
+                    className="btn-primary"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.55rem 0.85rem', flexShrink: 0 }}
+                  >
+                    <UserPlus size={15} /> Add
+                  </button>
+                </div>
+                {tempError && (
+                  <p style={{ color: 'var(--alert-danger)', fontSize: '0.8rem', marginTop: '0.5rem' }}>{tempError}</p>
+                )}
+              </div>
             </div>
           </div>
         );
@@ -1974,7 +2070,9 @@ export default function Home() {
               <h2 style={{ fontSize: '1.1rem' }}>Take {displayFor(pendingRemoval)} off the door?</h2>
             </div>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-              Apply this to <strong>{selectedDayIdx !== null && parsed ? parsed.days[selectedDayIdx].dateLabel : 'this schedule'}</strong> only, or to every future upload too?
+              {pendingRemoval.temporary
+                ? <>They were added by hand for this day only, so taking them off just removes them from this plan.</>
+                : <>Apply this to <strong>{selectedDayIdx !== null && parsed ? parsed.days[selectedDayIdx].dateLabel : 'this schedule'}</strong> only, or to every future upload too?</>}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
               <button
@@ -1982,15 +2080,20 @@ export default function Home() {
                 className="btn-primary"
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
               >
-                Just this schedule
+                {pendingRemoval.temporary ? 'Take them off' : 'Just this schedule'}
               </button>
-              <button
-                onClick={() => handleRemoveEmployee(pendingRemoval, true)}
-                className="btn-primary"
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', backgroundColor: 'var(--alert-danger)' }}
-              >
-                <Ban size={16} /> Permanently off the door
-              </button>
+              {/* A temporary person has no saved record, so "permanently" is
+                  meaningless for them - offering it would create the very roster
+                  entry the temporary add exists to avoid. */}
+              {!pendingRemoval.temporary && (
+                <button
+                  onClick={() => handleRemoveEmployee(pendingRemoval, true)}
+                  className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', backgroundColor: 'var(--alert-danger)' }}
+                >
+                  <Ban size={16} /> Permanently off the door
+                </button>
+              )}
               <button
                 onClick={() => setPendingRemoval(null)}
                 style={{ background: 'none', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: 'var(--radius-md)', cursor: 'pointer', color: 'var(--text-secondary)', fontFamily: 'inherit' }}
@@ -1998,9 +2101,11 @@ export default function Home() {
                 Cancel
               </button>
             </div>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.76rem', marginTop: '0.9rem' }}>
-              &quot;Permanently&quot; just keeps them off the auto-built door team. You can still add them back on any day, and undo it on the Employees page.
-            </p>
+            {!pendingRemoval.temporary && (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.76rem', marginTop: '0.9rem' }}>
+                &quot;Permanently&quot; just keeps them off the auto-built door team. You can still add them back on any day, and undo it on the Employees page.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -2012,6 +2117,7 @@ export default function Home() {
         date={parsed.days[selectedDayIdx].dateLabel}
         roster={employees}
         plan={scheduleMatrix}
+        isWeekend={isWeekend}
       />
     )}
 
@@ -2023,6 +2129,7 @@ export default function Home() {
         date={savedForPrint.date}
         roster={savedForPrint.roster}
         plan={savedForPrint.plan}
+        isWeekend={savedForPrint.isWeekend}
       />
     )}
     </>

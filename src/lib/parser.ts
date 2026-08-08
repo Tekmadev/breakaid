@@ -79,6 +79,49 @@ function formatClock(min: number): string {
 }
 
 /**
+ * Build a one-off {@link Employee} from a typed-in name and start/end time
+ * ("HH:MM"), for the builder's "this person is not in the file" case - a
+ * walk-in helper the schedule does not list. Deliberately reuses the SAME slot
+ * maths and compact shift label as the parsed roster, so a temporary person
+ * sorts, generates and prints exactly like everyone else.
+ *
+ * Returns null when the name is blank, either time is unparseable, or the shift
+ * would not cover a single slot. An end at or before the start is read as
+ * crossing midnight, matching {@link parseShiftSpan}.
+ */
+export function buildTemporaryEmployee(
+  name: string,
+  startHHMM: string,
+  endHHMM: string
+): Employee | null {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const startMin = parseHHMM(startHHMM);
+  let endMin = parseHHMM(endHHMM);
+  if (startMin == null || endMin == null) return null;
+  // The same time twice is a typo when it is typed by hand, not a 24-hour shift.
+  if (endMin === startMin) return null;
+  if (endMin < startMin) endMin += 24 * 60; // crosses midnight
+  const shiftStartIdx = timeToSlotIdx(startMin);
+  const shiftEndIdx = Math.min(timeToSlotIdx(endMin), LAST_SLOT_IDX);
+  if (shiftEndIdx <= shiftStartIdx) return null;
+  return {
+    name: trimmed,
+    shift: `${formatClock(startMin)}-${formatClock(endMin)}`,
+    // Same defaults the file parser uses; the manager can adjust them in the
+    // Capabilities modal before generating.
+    canWalk: true,
+    canSec: false,
+    canFE: true,
+    doorSide: "both",
+    temporary: true,
+    shiftStartIdx,
+    shiftEndIdx,
+    shiftLengthHours: Math.round(((endMin - startMin) / 60) * 4) / 4,
+  };
+}
+
+/**
  * Parse a schedule cell into a clock span. Supports multiple newline-separated
  * shifts (uses the earliest start … latest end). Treats an end ≤ start as
  * crossing midnight (e.g. "15:30 - 00:00"). Returns null for off/vacation/blank

@@ -99,6 +99,13 @@ export type Employee = {
    */
   doorSide?: DoorSide;
 
+  /**
+   * True for a one-off person the manager typed in by hand because the schedule
+   * file does not list them (a walk-in helper). They exist for this day's plan
+   * only and are deliberately NEVER written to the persisted employee roster.
+   */
+  temporary?: boolean;
+
   /** Inclusive start index in TIME_SLOTS. May be negative for pre-7 AM starts. */
   shiftStartIdx: number;
 
